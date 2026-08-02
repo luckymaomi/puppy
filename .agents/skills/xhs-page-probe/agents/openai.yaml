@@ -1,0 +1,4 @@
+interface:
+  display_name: "小红书页面探针"
+  short_description: "人工扫码登录后探测小红书搜索、滚动、笔记、评论与人工接管流程"
+  default_prompt: "Use $xhs-page-probe to inspect Xiaohongshu after manual login, collect page evidence, and validate an authorized interaction safely."
