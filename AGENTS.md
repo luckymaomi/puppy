@@ -33,7 +33,7 @@
 - 默认使用快速开发模式，直接完成代码、文档、定向测试和收口。
 - 只有 owner 明确要求专业模式、使用计划或继续计划时，才使用 `.agents/skills/plan/SKILL.md` 并维护根目录 `plan.md`；任务规模不能自动触发。
 - 修改实现、测试、事实文档或运行配置时使用 `.agents/skills/xhs-robot-dev/SKILL.md`。
-- 涉及小红书人工登录、Playwright 页面探测、搜索结果容器、滚动加载、图片/视频笔记、评论区、授权评论验证或验证码人工接管时使用 `.agents/skills/xhs-page-probe/SKILL.md`。
+- 涉及小红书人工登录、Playwright 页面探测、搜索结果容器、滚动加载、图片/视频笔记、评论区、真实评论验证或验证码人工接管时使用 `.agents/skills/xhs-page-probe/SKILL.md`。
 - 业务专属 skill 只在真实业务需要时新增，不把临时任务或产品事实硬编码进通用 skill。
 
 ## 双开发模式
@@ -60,7 +60,9 @@
 
 ## 完整验证
 
-- [待仓库确认，不是当前事实] 项目完整验证命令。
+- `python -W error -m compileall -q app.py xhs_robot tests`
+- `python -m pytest`
+- `python app.py --help`
 
 快速模式先运行最接近改动、最有证明力的短验证；专业模式按计划和风险扩大验证。无法运行时说明具体命令、原因和剩余风险。
 

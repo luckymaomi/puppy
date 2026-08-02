@@ -59,6 +59,13 @@ class EvidenceStore:
         self._write_json(path, self._sanitize(value))
         return path
 
+    def save_viewport(self, name: str, page: Any) -> Path:
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,79}", name):
+            raise ValueError("证据名称格式无效")
+        path = self.run_dir / f"{name}.png"
+        page.screenshot(path=str(path), full_page=False)
+        return path
+
     def save_page(self, page: Any, stage: str, full_page: bool = False) -> dict[str, str]:
         screenshot_path = self.run_dir / f"{stage}.png"
         html_path = self.run_dir / f"{stage}.html"
@@ -110,7 +117,8 @@ class EvidenceStore:
 
         return {**files, "html": html_path.name, "text": text_path.name}
 
-    def _write_json(self, path: Path, value: Any) -> None:
+    @staticmethod
+    def _write_json(path: Path, value: Any) -> None:
         temporary = path.with_suffix(path.suffix + ".tmp")
         temporary.write_text(
             json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8"

@@ -12,9 +12,14 @@ Thumbs.db
 # Python
 __pycache__/
 *.py[cod]
+.pytest_cache/
+*.egg-info/
 
 # Logs
 *.log
 
-# Local browser profiles and probe evidence
+# Current runtime data: browser profile, tasks, drafts and evidence
+.xhs-robot/
+
+# Old local probe data may still contain account material
 .xhs-probe/

@@ -51,7 +51,9 @@ description: 维护 xhs-robot 项目时使用。适用于修改实现、接口�
 
 ## 完整验证
 
-- [待仓库确认，不是当前事实] 项目完整验证命令。
+- `python -W error -m compileall -q app.py xhs_robot tests`
+- `python -m pytest`
+- `python app.py --help`
 
 快速模式先运行与改动最接近、最有证明力的短检查；专业模式再按计划和风险扩大到完整验证与核心路径。昂贵全量、真实外部服务、容量和发布物测试只在项目规则、风险或 owner 明确授权要求时运行。无法运行时写明具体命令、阻塞原因和剩余风险，不能写成已通过。
 
