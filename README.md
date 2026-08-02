@@ -1,90 +1,91 @@
-# XhsPost（小红书评论机器人）
+# xhs-robot
 
-> 仅供学习研究与个人自动化演示使用，请遵守平台使用条款与当地法律法规，不要滥用。本工具不对因使用产生的任何后果负责。
+`xhs-robot` 当前是一个由 agent 逐步操作的小红书实时页面探针。浏览器作为独立可见进程运行；每一步先保存当前视口和脱敏页面证据，再根据真实页面结构决定下一次操作。
 
+旧 `XhsPost.py` 会直接执行关注、点赞和评论，不是当前入口。`XhsPost（人工）.py` 是禁止修改的保留版本。
 
+## 环境
 
-![评论示意](./评论示意.png)
+- Windows
+- Python 3.12
+- Playwright 1.58
 
-一个爱凑热闹的小机器人：打开浏览器溜进小红书「探索」区，漫无目的地逛逛。看到一条就“咔哒”点开，不读不想、不纠结，直接贴上一句小情话，挥手关掉，再去下一条。循环往复，post! post! post! 快乐不间断。
+安装：
 
-## 需要准备什么
-
-- 已安装 Python 3.8 及以上
-- 能联网的环境（脚本会调用情话 API 和打开小红书网页版）
-- 浏览器自动化依赖：Playwright（脚本会用到 Chromium）
-
-## 安装依赖
-
-requests
-playwright
-
-## 必要配置：Cookie（必须登录）
-
-![websession填写](./websession填写.png)
-
-![websession在哪里](./websession在哪里.png)
-
-脚本默认写了示例 Cookie（`web_session`），通常会失效。你需要：
-
-1) 用浏览器登录网页版小红书
-2) 打开开发者工具 → Application/存储 → Cookies → 找到域名 `xiaohongshu.com`
-3) 复制 `web_session` 的值
-4) 打开 `XhsPost.py`，找到如下位置并替换 `value`
-
-```python
-cookies = [
-    {"name": "web_session", "value": "你的web_session值", "domain": ".xiaohongshu.com", "path": "/"}
-]
+```powershell
+python -m pip install -r requirements.txt
+python -m playwright install chromium
 ```
 
-> 如果你更习惯免登录，也可以自行改造上下文持久化或手动登录后再运行。
+## 启动
 
+```powershell
+python app.py start
+```
 
-- 运行后会弹出一个浏览器窗口
-- 脚本会自动打开「探索/发现」页
-- 终端会提示输入循环轮数 X（比如 5）
-- 然后它会：下翻 → 取到当前屏的笔记列表 → 逐条进入 → 填入情话 → 发送 → 返回
+命令完成后 Chromium 仍会保持打开。登录、扫码、验证码和安全校验全部由用户在可见浏览器中处理，不需要复制 Cookie。
 
-## 可以改哪些参数
+本地浏览器资料和探针证据保存在 `.xhs-probe/`，该目录已被 Git 忽略。关闭浏览器窗口即可结束会话。
 
-在 `XhsPost.py` 里：
+## 实时探测
 
-- `Bottle.timeout_value`：全局超时（毫秒），默认 `60000`
-- `human_wait()`：每步之间的随机等待（毫秒范围），默认 3000–5000，可自行调整为更慢更稳
-- `headers`：UA 等请求头
-- `cookies`：登录态（见上文）
+读取当前页面状态：
 
-选择器（页面改版时可能需要调整）：
-- 容器：`#exploreFeeds`
-- 列表项：`.note-item`
-- 标题：`.title`
-- 作者：`.name`
-- 喜欢数：`.count`
-- 缩略图：`img`
-- 进入笔记：`.cover.mask.ld`
-- 评论文本框：`#content-textarea`
-- 关闭笔记：`.close.close-mask-dark`
+```powershell
+python app.py status
+```
 
-## 常见问题
+保存当前视口截图、脱敏 HTML 和有限文本摘要：
 
-- 打不开网页 / 超时？
-  - 检查网络与代理，适当增大 `timeout_value`
-- 一直提示未登录 / 评论失败？
-  - 你的 `web_session` 失效了，换新的；或改成手动登录后再运行
-- 选择器报错找不到元素？
-  - 小红书前端结构更新了，按上面的「选择器」位置逐一核对并修改
-- 情话 API 没返回？
-  - `loveword()` 返回 `None` 时可改成固定文案（例如：`love = "好喜欢这条笔记！"`）
-- 想先“试运行”不真的发？
-  - 注释掉发送的两行：
-    - `page.locator('#content-textarea').press("Enter")`
-    - 以及相关点击/提交；或仅打印 `love` 内容
+```powershell
+python app.py snapshot --stage current-page
+```
 
-## 风险与合规
+整页截图可能触发页面滚动，只用于不需要保留滚动位置的基线：
 
-- 请合理设置等待时间与循环次数，避免高频操作
-- 仅在取得授权或允许的前提下进行自动化操作
-- 请确保你的行为符合小红书平台规则及当地法律
+```powershell
+python app.py snapshot --stage baseline --full-page
+```
 
-祝你玩的开心，也请文明上网 :)
+读取当前页面中的可交互元素、滚动容器、链接、详情媒体或 frame：
+
+```powershell
+python app.py inspect interactive
+python app.py inspect scroll
+python app.py inspect links
+python app.py inspect detail
+python app.py inspect frames
+```
+
+`inspect` 会为本轮可见元素分配临时 `probe_id`。agent 只能使用刚观察到的临时 ID 执行一个动作，然后重新截图和检查页面：
+
+```powershell
+python app.py act click --id node-123
+python app.py act fill --id node-124 --value "AI Agent"
+python app.py act press --id node-124 --value Enter
+python app.py act scroll --id window --delta 700
+python app.py act back
+```
+
+页面重绘后临时 ID 可能失效，应重新运行 `inspect`，不能把本次 ID 或页面 class 固化为长期选择器。
+
+当前实测中，搜索结果由窗口滚动并使用虚拟列表；应跨轮累计唯一笔记 ID。整页截图可能重置滚动位置，不能用于实时滚动阶段。详情可通过命中遮罩空白区后点击关闭，但每次都要重新确认遮罩和关闭结果，不能固定坐标。
+
+## 写入边界
+
+- 默认只读探测。
+- 点赞、收藏、评论和回复基于当前登录账号的交互权限执行，系统不限制目标笔记的归属。
+- 提交前必须确认目标、内容和控件状态；提交后必须用页面文本、计数或状态变化核验。
+- 结果不确定时不得自动重试。
+- 验证码、安全校验或登录失效出现时立即停止操作，等待人工处理。
+
+## 验证
+
+```powershell
+python -m py_compile app.py evidence.py
+python app.py --help
+```
+
+真实页面能力以当次 `.xhs-probe/evidence/<run-id>/` 中的证据为准，不能用静态检查替代。
+
+2026-08-02 已真实验证图片笔记详情、取消并恢复点赞、回复一条评论以及点击遮罩关闭详情；视频详情、整篇笔记评论提交、验证码暂停恢复、收藏和关注仍未验证。
