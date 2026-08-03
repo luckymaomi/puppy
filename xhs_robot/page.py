@@ -92,8 +92,19 @@ class XhsPage:
         if gate == PageGate.HUMAN:
             raise HumanInterventionRequired(reason or "页面要求人工接管", gate)
 
-    def search(self, keyword: str) -> None:
+    def search(self, keyword: str) -> list[NoteLink]:
         self.require_ready()
+        before = self.page.evaluate(
+            """
+            () => ({
+              noteIds: [...document.querySelectorAll('a[href]')].map((node) => {
+                try {
+                  return new URL(node.href, document.baseURI).pathname.match(/\\/search_result\\/([0-9a-fA-F]{24})(?:\\/|$)/)?.[1] || null;
+                } catch (_) { return null; }
+              }).filter(Boolean)
+            })
+            """
+        )
         candidate = self.page.evaluate(
             """
             () => {
@@ -135,45 +146,42 @@ class XhsPage:
         if not candidate:
             raise InteractionUncertain("没有找到当前可见且命中的搜索输入框")
         editor = self._probe_locator(candidate["id"])
-        before = self.page.evaluate(
-            """
-            () => ({
-              path: location.pathname,
-              noteIds: [...document.querySelectorAll('a[href]')].map((node) => {
-                try {
-                  return new URL(node.href, document.baseURI).pathname.match(/\\/(?:search_result|explore)\\/([0-9a-fA-F]{24})(?:\\/|$)/)?.[1] || null;
-                } catch (_) { return null; }
-              }).filter(Boolean)
-            })
-            """
-        )
         editor.click()
         editor.fill(keyword)
         actual = editor.input_value() if editor.evaluate("node => 'value' in node") else editor.inner_text()
         if actual.strip() != keyword:
             raise InteractionUncertain("搜索关键词填入后读取值不一致")
         editor.press("Enter")
+        self.evidence.event("search_submitted", keyword=keyword, url=self.page.url)
         try:
             self.page.wait_for_function(
                 """
                 (before) => {
                   const currentIds = [...document.querySelectorAll('a[href]')].map((node) => {
                     try {
-                      return new URL(node.href, document.baseURI).pathname.match(/\\/(?:search_result|explore)\\/([0-9a-fA-F]{24})(?:\\/|$)/)?.[1] || null;
+                      return new URL(node.href, document.baseURI).pathname.match(/\\/search_result\\/([0-9a-fA-F]{24})(?:\\/|$)/)?.[1] || null;
                     } catch (_) { return null; }
                   }).filter(Boolean);
-                  return location.pathname !== before.path
-                    || currentIds.some((id) => !before.noteIds.includes(id));
+                  return location.pathname.startsWith('/search_result')
+                    && currentIds.some((id) => !before.noteIds.includes(id));
                 }
                 """,
                 arg=before,
-                timeout=15000,
+                timeout=30000,
             )
         except Exception as exc:
             self.require_ready()
-            raise InteractionUncertain("提交搜索后未观察到笔记结果") from exc
-        self.evidence.event("search_complete", keyword=keyword, url=self.page.url)
+            raise InteractionUncertain(
+                "搜索页已打开，但等待 30 秒仍未加载出笔记结果"
+            ) from exc
+        notes = self.collect_note_links()
+        if not notes:
+            raise InteractionUncertain("搜索页已打开，但没有识别到可处理的笔记")
+        self.evidence.event(
+            "search_complete", keyword=keyword, result_count=len(notes), url=self.page.url
+        )
         self._capture("search-complete")
+        return notes
 
     def collect_note_links(self) -> list[NoteLink]:
         raw_links = self.page.evaluate(
@@ -192,7 +200,12 @@ class XhsPage:
         )
         notes: list[NoteLink] = []
         seen: set[str] = set()
+        search_results_only = self.page.evaluate(
+            "() => location.pathname.startsWith('/search_result')"
+        )
         for link in raw_links:
+            if search_results_only and not link["path"].startswith("/search_result/"):
+                continue
             match = NOTE_PATH_PATTERN.search(link["path"])
             if not match or match.group(1) in seen:
                 continue
@@ -321,6 +334,8 @@ class XhsPage:
         container = self.page.locator(f'[data-xhs-comment-id="{comment.comment_id}"]')
         if container.count() != 1 or not container.is_visible():
             raise InteractionUncertain("目标评论已离开当前可见 DOM")
+        container.scroll_into_view_if_needed()
+        self.page.wait_for_timeout(200)
         target_id = container.evaluate(
             """
             (node) => {
@@ -359,30 +374,25 @@ class XhsPage:
 
     def _submit_text(self, text: str, kind: str) -> None:
         self.require_ready()
-        self._capture(f"before-{kind}")
-        editor_id = self._discover_editor()
-        editor = self._probe_locator(editor_id)
-        editor.click()
-        editor.fill(text)
-        actual = editor.evaluate("node => 'value' in node ? node.value : node.innerText")
-        if actual.strip() != text:
-            raise InteractionUncertain("写入输入区后读取内容不一致")
-        before_count = self._text_result_count(text, editor_id)
-        submit_id = self._discover_submit(editor_id)
-        self._probe_locator(submit_id).click()
-        deadline = time.monotonic() + 12
-        while time.monotonic() < deadline:
-            self.page.wait_for_timeout(400)
-            self.require_ready()
-            value = editor.evaluate("node => 'value' in node ? node.value : node.innerText")
-            after_count = self._text_result_count(text, editor_id)
-            if not value.strip() and after_count > before_count:
-                self.evidence.event("write_verified", kind=kind, text=text)
-                self._capture(f"after-{kind}")
-                return
-        self.evidence.event("write_uncertain", kind=kind, text=text)
-        self._capture(f"uncertain-{kind}")
-        raise InteractionUncertain("提交后未同时观察到输入清空和新增文本；不会自动重试")
+        try:
+            editor_id = self._discover_editor()
+            editor_id = self._activate_editor(editor_id)
+            editor = self._probe_locator(editor_id)
+            editor.fill(text)
+            actual = editor.evaluate(
+                "node => 'value' in node ? node.value : node.innerText"
+            )
+            if actual.strip() != text:
+                raise InteractionUncertain("写入输入区后读取内容不一致")
+            submit_id = self._discover_submit(editor_id)
+            self._probe_locator(submit_id).click()
+        except InteractionUncertain:
+            raise
+        except Exception as exc:
+            raise InteractionUncertain(
+                "评论输入或提交控件操作失败"
+            ) from exc
+        self.evidence.event("write_dispatched", kind=kind, text=text)
 
     def _discover_editor(self) -> str:
         result = self.page.evaluate(
@@ -397,7 +407,10 @@ class XhsPage:
               const hit = (node) => {
                 const rect = node.getBoundingClientRect();
                 const target = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
-                return target && (target === node || node.contains(target) || target.contains(node));
+                if (!target) return false;
+                if (target === node || node.contains(target) || target.contains(node)) return true;
+                const inputBox = node.closest('.input-box');
+                return inputBox ? inputBox.contains(target) : false;
               };
               const root = [...document.querySelectorAll('.note-detail-mask, [role="dialog"]')].find(visible) || document.body;
               const candidates = [...root.querySelectorAll('p.content-input, textarea, [contenteditable="true"], [role="textbox"]')]
@@ -423,6 +436,40 @@ class XhsPage:
         if not result:
             raise InteractionUncertain("没有找到详情中的可见评论输入区")
         return result
+
+    def _activate_editor(self, editor_id: str) -> str:
+        point = self.page.evaluate(
+            """
+            (editorId) => {
+              const editor = document.querySelector(`[data-xhs-live-probe-id="${editorId}"]`);
+              if (!editor) return null;
+              const rect = editor.getBoundingClientRect();
+              const points = [
+                [rect.left + rect.width / 2, rect.top + rect.height / 2],
+                [rect.left + Math.min(24, rect.width / 3), rect.top + rect.height / 2]
+              ];
+              const inputBox = editor.closest('.input-box');
+              for (const [x, y] of points) {
+                const target = document.elementFromPoint(x, y);
+                const accepted = target && (
+                  target === editor || editor.contains(target) || target.contains(editor)
+                  || (inputBox && inputBox.contains(target))
+                );
+                if (accepted) return {x, y};
+              }
+              return null;
+            }
+            """,
+            editor_id,
+        )
+        if point is None:
+            raise InteractionUncertain("评论输入区当前被无关页面元素遮挡")
+        self.page.mouse.click(point["x"], point["y"])
+        self.page.wait_for_timeout(300)
+        active_editor_id = self._discover_editor()
+        if not self._probe_locator(active_editor_id).is_editable():
+            raise InteractionUncertain("点击后评论输入区未进入可编辑状态")
+        return active_editor_id
 
     def _discover_submit(self, editor_id: str) -> str:
         result = self.page.evaluate(
@@ -468,20 +515,6 @@ class XhsPage:
         if not result:
             raise InteractionUncertain("输入完成后没有找到可见提交控件")
         return result
-
-    def _text_result_count(self, text: str, editor_id: str) -> int:
-        return self.page.evaluate(
-            """
-            ({text, editorId}) => [...document.querySelectorAll('body *')].filter((node) => {
-              if (node.closest(`[data-xhs-live-probe-id="${editorId}"]`)) return false;
-              if ((node.innerText || '').trim() !== text) return false;
-              const style = getComputedStyle(node);
-              const rect = node.getBoundingClientRect();
-              return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 2 && rect.height > 2;
-            }).length
-            """,
-            {"text": text, "editorId": editor_id},
-        )
 
     def close_detail(self, note_id: str) -> None:
         before_path = self.page.evaluate("() => location.pathname")
@@ -555,4 +588,9 @@ class XhsPage:
 
     def _capture(self, prefix: str) -> None:
         name = f"{prefix}-{int(time.time() * 1000)}"
-        self.evidence.save_viewport(name, self.page)
+        try:
+            self.evidence.save_viewport(name, self.page)
+        except Exception as exc:
+            self.evidence.event(
+                "capture_failed", stage=name, error=type(exc).__name__
+            )

@@ -1,7 +1,7 @@
 from xhs_robot.ai import GenerationError
 from xhs_robot.automation import TaskRunner
 from xhs_robot.page import NoteContext, VisibleComment
-from xhs_robot.tasks import TaskConfig, TaskStatus, TaskStore
+from xhs_robot.tasks import PendingDraft, TaskConfig, TaskStatus, TaskStore
 
 
 class FakeGenerator:
@@ -37,6 +37,7 @@ def test_resume_does_not_duplicate_verified_note_or_comment_writes(tmp_path) -> 
     store = TaskStore(tmp_path)
     task = store.create(
         TaskConfig(
+            profile_id="default",
             keyword="AI Agent",
             send_mode="auto",
             replies_min=2,
@@ -75,8 +76,74 @@ def test_ai_failure_pauses_task_for_recovery(tmp_path) -> None:
             raise GenerationError("service unavailable")
 
     store = TaskStore(tmp_path)
-    task = store.create(TaskConfig(keyword="AI Agent"))
+    task = store.create(TaskConfig(profile_id="default", keyword="AI Agent"))
     result = TaskRunner(FailingSession(), store).run(task.id)
 
     assert result.task.status == TaskStatus.PAUSED
     assert result.task.last_error == "service unavailable"
+
+
+def test_workbench_close_request_wins_over_a_stale_running_save(tmp_path) -> None:
+    class DisconnectingSession:
+        def with_page(self, callback):
+            stale = store.load(task.id)
+            stale.set_status(TaskStatus.RUNNING)
+            store.save(stale)
+            raise RuntimeError("browser disconnected")
+
+    store = TaskStore(tmp_path)
+    task = store.create(TaskConfig(profile_id="default", keyword="AI Agent"))
+    runner = TaskRunner(
+        DisconnectingSession(),
+        store,
+        control_status=lambda _: (TaskStatus.PAUSED, "工作台关闭"),
+    )
+
+    result = runner.run(task.id)
+
+    assert result.task.status == TaskStatus.PAUSED
+    assert result.task.stop_reason == "工作台关闭"
+    assert store.load(task.id).status == TaskStatus.PAUSED
+
+
+def test_unexpected_browser_exit_pauses_task_for_same_profile_recovery(tmp_path) -> None:
+    class ClosedBrowserSession:
+        running = True
+
+        def status(self):
+            return {
+                "running": self.running,
+                "profile_id": "default" if self.running else None,
+            }
+
+        def with_page(self, callback):
+            self.running = False
+            raise RuntimeError("browser disconnected")
+
+    store = TaskStore(tmp_path)
+    task = store.create(TaskConfig(profile_id="default", keyword="AI Agent"))
+
+    result = TaskRunner(ClosedBrowserSession(), store).run(task.id)
+
+    assert result.task.status == TaskStatus.PAUSED
+    assert "重新启动任务绑定的浏览器" in result.task.stop_reason
+
+
+def test_approval_mode_continues_only_with_the_recorded_decision(tmp_path) -> None:
+    store = TaskStore(tmp_path)
+    task = store.create(TaskConfig(profile_id="default", keyword="AI Agent", send_mode="approval"))
+    runner = TaskRunner(session=None, store=store)
+    task.pending_draft = PendingDraft(
+        kind="comment",
+        text="批准后发送的草稿",
+        note_id="64d73b70c2133c0001abcd12",
+        approval_status="approved",
+    )
+
+    approved = runner._approve(task, task.pending_draft.text, "comment", "笔记正文")
+
+    assert approved == "批准后发送的草稿"
+    task.pending_draft.approval_status = "skipped"
+    skipped = runner._approve(task, task.pending_draft.text, "comment", "笔记正文")
+    assert skipped is None
+    assert task.pending_draft is None

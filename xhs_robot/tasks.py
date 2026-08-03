@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import msvcrt
+import re
 import secrets
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
@@ -9,6 +10,9 @@ from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Iterator
+
+
+PROFILE_ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
 
 
 def now_iso() -> str:
@@ -19,29 +23,36 @@ class TaskStatus(StrEnum):
     CREATED = "created"
     RUNNING = "running"
     WAITING_LOGIN = "waiting_login"
-    WAITING_REVIEW = "waiting_review"
+    WAITING_APPROVAL = "waiting_approval"
     WAITING_HUMAN = "waiting_human"
     PAUSED = "paused"
     COMPLETE = "complete"
     FAILED = "failed"
-    CANCELLED = "cancelled"
+    STOPPED = "stopped"
 
 
-TERMINAL_STATUSES = {TaskStatus.COMPLETE, TaskStatus.FAILED, TaskStatus.CANCELLED}
+TERMINAL_STATUSES = {TaskStatus.COMPLETE, TaskStatus.FAILED, TaskStatus.STOPPED}
 
 
 @dataclass(slots=True)
 class TaskConfig:
+    profile_id: str
     keyword: str
     max_notes: int = 10
     replies_min: int = 1
     replies_max: int = 2
-    send_mode: str = "review"
+    send_mode: str = "approval"
     min_delay: float = 3.0
     max_delay: float = 7.0
     daily_write_limit: int = 30
 
     def validate(self) -> None:
+        if not isinstance(self.profile_id, str) or not PROFILE_ID_PATTERN.fullmatch(
+            self.profile_id
+        ):
+            raise ValueError("任务绑定的浏览器资料 ID 无效")
+        if not isinstance(self.keyword, str):
+            raise ValueError("关键词必须是字符串")
         self.keyword = self.keyword.strip()
         if not self.keyword or len(self.keyword) > 80:
             raise ValueError("关键词长度必须在 1 到 80 个字符之间")
@@ -49,8 +60,8 @@ class TaskConfig:
             raise ValueError("每个任务最多处理 1 到 100 篇笔记")
         if not 0 <= self.replies_min <= self.replies_max <= 3:
             raise ValueError("随机回复数必须满足 0 <= 最小值 <= 最大值 <= 3")
-        if self.send_mode not in {"review", "auto"}:
-            raise ValueError("发送模式只能是 review 或 auto")
+        if self.send_mode not in {"approval", "auto"}:
+            raise ValueError("发送模式只能是 approval 或 auto")
         if not 1 <= self.min_delay <= self.max_delay <= 120:
             raise ValueError("操作间隔必须满足 1 <= 最小秒数 <= 最大秒数 <= 120")
         if not 1 <= self.daily_write_limit <= 200:
@@ -65,6 +76,7 @@ class PendingDraft:
     comment_id: str | None = None
     target_text: str | None = None
     dedupe_key: str | None = None
+    approval_status: str = "pending"
 
 
 @dataclass(slots=True)
@@ -184,7 +196,12 @@ class TaskStore:
 
     def create(self, config: TaskConfig) -> TaskState:
         config.validate()
-        task_id = datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(2)
+        existing = self.find_unfinished(config.profile_id)
+        if existing is not None:
+            raise ValueError(
+                f"浏览器资料 {config.profile_id} 已有未结束任务 {existing.id}"
+            )
+        task_id = datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(4)
         task = TaskState(id=task_id, config=config)
         self.save(task)
         return task
@@ -210,6 +227,21 @@ class TaskStore:
             for path in self.root.glob("*.json")
         ]
         return sorted(tasks, key=lambda task: task.created_at, reverse=True)
+
+    def find_unfinished(self, profile_id: str) -> TaskState | None:
+        if not isinstance(profile_id, str) or not PROFILE_ID_PATTERN.fullmatch(
+            profile_id
+        ):
+            raise ValueError("浏览器资料 ID 格式无效")
+        return next(
+            (
+                task
+                for task in self.list()
+                if task.config.profile_id == profile_id
+                and task.status not in TERMINAL_STATUSES
+            ),
+            None,
+        )
 
     def daily_write_count(self, day: str | None = None) -> int:
         expected = day or datetime.now().astimezone().date().isoformat()

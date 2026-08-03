@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'">
+    <title>xhs-robot 工作台</title>
+    <link rel="stylesheet" href="/assets/styles.css">
+    <script src="/assets/app.js" defer></script>
+  </head>
+  <body>
+    <header class="app-banner">
+      <div class="workspace banner-layout">
+        <div class="app-identity">
+          <code>LOCAL CONSOLE / 1.0</code>
+          <h1>xhs-robot</h1>
+          <p>小红书互动任务工作台</p>
+        </div>
+        <div class="header-status" aria-live="polite">
+          <span class="status-pill" id="provider-status"><i></i>AI 未配置</span>
+          <span class="status-pill" id="browser-status"><i></i>浏览器未启动</span>
+          <span class="status-pill" id="task-status"><i></i>无活动任务</span>
+        </div>
+      </div>
+    </header>
+
+    <main class="workspace main-workspace">
+      <section id="workflow-home">
+        <div class="workspace-guide">
+          <span>本机工作流</span>
+          <code id="config-file">.env</code>
+        </div>
+        <div class="workflow-list" role="list">
+          <button class="workflow-card" type="button" data-open-workflow="task" role="listitem">
+            <span class="workflow-icon" aria-hidden="true">▶</span>
+            <span class="workflow-copy">
+              <span class="workflow-title"><strong>任务运行</strong><small id="home-task-state">空闲</small></span>
+              <span id="home-task-summary">没有进行中的任务</span>
+            </span>
+          </button>
+          <button class="workflow-card" type="button" data-open-workflow="task" data-scroll-target="browser-step" role="listitem">
+            <span class="workflow-icon browser-icon" aria-hidden="true">◎</span>
+            <span class="workflow-copy">
+              <span class="workflow-title"><strong>浏览器会话</strong><small id="home-browser-state">未启动</small></span>
+              <span id="home-browser-summary">Chromium 未连接</span>
+            </span>
+          </button>
+          <button class="workflow-card" type="button" data-open-workflow="config" role="listitem">
+            <span class="workflow-icon ai-icon" aria-hidden="true">AI</span>
+            <span class="workflow-copy">
+              <span class="workflow-title"><strong>AI 配置</strong><small id="home-config-state">未就绪</small></span>
+              <span id="home-config-summary">Provider 与模型待配置</span>
+              <code id="home-config-path">.env</code>
+            </span>
+          </button>
+          <button class="workflow-card" type="button" data-open-workflow="logs" role="listitem">
+            <span class="workflow-icon" aria-hidden="true">≡</span>
+            <span class="workflow-copy">
+              <span class="workflow-title"><strong>运行记录</strong><small id="home-log-state">当前会话</small></span>
+              <span id="home-log-summary">暂无控制台事件</span>
+            </span>
+          </button>
+        </div>
+      </section>
+
+      <section id="workflow-detail" hidden aria-live="polite">
+        <button class="back-button" id="back-home" type="button">返回工作台</button>
+
+        <article class="workflow-panel" data-workflow-panel="task" hidden>
+          <div class="detail-heading">
+            <span class="eyebrow">TASK RUNTIME</span>
+            <div class="heading-row"><h1>任务运行</h1><span class="state-badge" id="current-state">空闲</span></div>
+          </div>
+
+          <ol class="flow-steps">
+            <li class="flow-step" id="browser-step">
+              <div class="step-number">1</div>
+              <div class="step-content">
+                <div class="step-heading"><h2>浏览器会话</h2><div class="button-row"><button class="button secondary" id="browser-check" type="button">检查登录</button><button class="button quiet-danger" id="browser-stop" type="button"><span aria-hidden="true">■</span> 停止浏览器</button></div></div>
+                <div class="form-grid browser-profile-fields">
+                  <label class="field"><span>已有浏览器</span><select id="browser-profile"></select></label>
+                  <label class="field"><span>新浏览器名称</span><input id="browser-profile-name" maxlength="40" placeholder="例如：主账号"></label>
+                </div>
+                <div class="button-row browser-profile-actions"><button class="button primary" id="browser-reuse" type="button"><span aria-hidden="true">▶</span> 继续使用</button><button class="button secondary" id="browser-create" type="button">新建浏览器</button></div>
+                <div class="fact-strip runtime-strip">
+                  <span><small>浏览器</small><strong id="runtime-browser">未启动</strong></span>
+                  <span><small>浏览器资料</small><strong id="runtime-profile">-</strong></span>
+                  <span><small>AI Provider</small><strong id="runtime-provider">未配置</strong></span>
+                  <span><small>当前模型</small><strong id="runtime-model">-</strong></span>
+                  <span><small>执行线程</small><strong id="runtime-worker">空闲</strong></span>
+                </div>
+              </div>
+            </li>
+
+            <li class="flow-step">
+              <div class="step-number">2</div>
+              <div class="step-content">
+                <h2>任务参数</h2>
+                <form class="task-form" id="task-form">
+                  <div class="form-grid task-fields">
+                    <label class="field field-wide"><span>搜索关键词</span><input name="keyword" maxlength="80" required placeholder="例如：AI Agent"></label>
+                    <fieldset class="mode-selector field-wide">
+                      <legend>发送模式</legend>
+                      <label><input type="radio" name="send_mode" value="approval" checked><span><strong>批准模式</strong><small>逐条确认</small></span></label>
+                      <label><input type="radio" name="send_mode" value="auto"><span><strong>自动模式</strong><small>按参数连续执行</small></span></label>
+                    </fieldset>
+                    <label class="field"><span>笔记数</span><input name="max_notes" type="number" min="1" max="100" value="5" required></label>
+                    <label class="field"><span>最少回复</span><input name="replies_min" type="number" min="0" max="3" value="1" required></label>
+                    <label class="field"><span>最多回复</span><input name="replies_max" type="number" min="0" max="3" value="2" required></label>
+                    <label class="field"><span>最短间隔（秒）</span><input name="min_delay" type="number" min="1" max="120" step="0.5" value="3" required></label>
+                    <label class="field"><span>最长间隔（秒）</span><input name="max_delay" type="number" min="1" max="120" step="0.5" value="7" required></label>
+                    <label class="field"><span>每日写入上限</span><input name="daily_write_limit" type="number" min="1" max="200" value="30" required></label>
+                  </div>
+                  <div class="action-row"><button class="button run" type="submit"><span aria-hidden="true">▶</span> 创建并启动</button></div>
+                </form>
+              </div>
+            </li>
+
+            <li class="flow-step">
+              <div class="step-number">3</div>
+              <div class="step-content current-task">
+                <h2>当前任务</h2>
+                <div id="empty-task" class="empty-state"><span>没有进行中的任务</span></div>
+                <div id="task-detail" class="task-detail" hidden>
+                  <div class="task-title-line"><div><small>关键词</small><strong id="current-keyword">-</strong></div><code id="current-id">-</code></div>
+                  <div class="progress-track" aria-label="任务进度"><span id="task-progress"></span></div>
+                  <div class="fact-strip metric-grid">
+                    <span><small>已处理笔记</small><strong id="metric-notes">0 / 0</strong></span>
+                    <span><small>已发评论</small><strong id="metric-comments">0</strong></span>
+                    <span><small>已发回复</small><strong id="metric-replies">0</strong></span>
+                    <span><small>发送模式</small><strong id="metric-mode">-</strong></span>
+                    <span><small>浏览器资料</small><strong id="metric-profile">-</strong></span>
+                  </div>
+                  <div class="stop-reason" id="stop-reason" hidden></div>
+                  <div class="button-row task-actions">
+                    <button class="button secondary" id="task-pause" type="button"><span aria-hidden="true">Ⅱ</span> 暂停</button>
+                    <button class="button run" id="task-resume" type="button"><span aria-hidden="true">▶</span> 继续</button>
+                    <button class="button quiet-danger" id="task-stop" type="button"><span aria-hidden="true">■</span> 停止任务</button>
+                  </div>
+                </div>
+              </div>
+            </li>
+
+            <li class="flow-step">
+              <div class="step-number">4</div>
+              <div class="step-content task-history">
+                <div class="step-heading"><h2>最近任务</h2><button class="icon-button" id="refresh-tasks" type="button" title="刷新任务" aria-label="刷新任务">↻</button></div>
+                <div class="table-wrap">
+                  <table><thead><tr><th>任务</th><th>浏览器</th><th>关键词</th><th>状态</th><th>评论</th><th>回复</th><th>更新时间</th><th>操作</th></tr></thead><tbody id="task-table"></tbody></table>
+                </div>
+              </div>
+            </li>
+          </ol>
+        </article>
+
+        <article class="workflow-panel" data-workflow-panel="config" hidden>
+          <div class="detail-heading"><span class="eyebrow">PROVIDER</span><h1>AI 配置</h1></div>
+          <form id="config-form">
+            <ol class="flow-steps">
+              <li class="flow-step">
+                <div class="step-number">1</div>
+                <div class="step-content">
+                  <h2>当前配置</h2>
+                  <div class="fact-strip config-facts">
+                    <span><small>Provider</small><strong id="config-current-provider">-</strong></span>
+                    <span><small>模型</small><strong id="config-current-model">-</strong></span>
+                    <span><small>API Key</small><strong id="config-current-key">未配置</strong></span>
+                    <span><small>配置文件</small><strong>.env</strong></span>
+                  </div>
+                </div>
+              </li>
+              <li class="flow-step">
+                <div class="step-number">2</div>
+                <div class="step-content">
+                  <h2>Provider 与模型</h2>
+                  <div class="form-grid">
+                    <label class="field"><span>Provider</span><input name="XHS_PROVIDER" list="provider-options" required><datalist id="provider-options"><option value="siliconflow"></option><option value="openai-compatible"></option></datalist></label>
+                    <label class="field"><span>API 协议</span><select name="XHS_API_STYLE"><option value="chat_completions">Chat Completions</option><option value="responses">Responses</option></select></label>
+                    <label class="field field-wide"><span>API Key</span><div class="secret-field"><input name="XHS_API_KEY" type="password" autocomplete="new-password" placeholder="输入新密钥"><button class="icon-button" id="toggle-key" type="button" title="显示或隐藏密钥" aria-label="显示或隐藏密钥">◉</button></div><small id="key-state">未配置</small></label>
+                    <label class="field field-wide"><span>Base URL</span><input name="XHS_BASE_URL" type="url" required></label>
+                    <label class="field field-wide"><span>模型</span><input name="XHS_MODEL" list="model-options" required><datalist id="model-options"></datalist></label>
+                  </div>
+                  <div class="action-row"><button class="button secondary" id="refresh-models" type="button">刷新模型</button><button class="button quiet-danger" id="clear-key" type="button">清除 API Key</button><span class="action-note" id="model-count">模型未加载</span></div>
+                </div>
+              </li>
+              <li class="flow-step">
+                <div class="step-number">3</div>
+                <div class="step-content">
+                  <h2>请求参数</h2>
+                  <div class="form-grid">
+                    <label class="field"><span>请求超时（秒）</span><input name="XHS_REQUEST_TIMEOUT_SECONDS" type="number" min="1" max="300" step="1" required></label>
+                    <label class="field"><span>最大输出 Token</span><input name="XHS_MAX_OUTPUT_TOKENS" type="number" min="1" max="4096" step="1" required></label>
+                  </div>
+                  <div class="action-row"><button class="button primary" type="submit">保存配置</button></div>
+                </div>
+              </li>
+              <li class="flow-step">
+                <div class="step-number">4</div>
+                <div class="step-content provider-tools">
+                  <h2>连接检查</h2>
+                  <div class="button-row"><button class="button secondary" id="provider-health" type="button">健康检查</button><button class="button primary" id="provider-generate" type="button">真实生成测试</button></div>
+                  <output id="provider-output" class="probe-output">等待检查</output>
+                </div>
+              </li>
+            </ol>
+          </form>
+        </article>
+
+        <article class="workflow-panel" data-workflow-panel="logs" hidden>
+          <div class="detail-heading"><span class="eyebrow">EVENT STREAM</span><div class="heading-row"><h1>运行记录</h1><button class="button secondary" id="clear-logs" type="button">清空当前视图</button></div></div>
+          <div class="event-log" id="event-log" aria-live="polite"></div>
+        </article>
+      </section>
+    </main>
+
+    <div class="modal-backdrop" id="modal" hidden>
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <div class="modal-body">
+          <div class="modal-heading">
+            <div class="modal-symbol" id="modal-symbol" aria-hidden="true">!</div>
+            <div class="modal-copy">
+              <span class="eyebrow" id="modal-eyebrow">ACTION REQUIRED</span>
+              <h2 id="modal-title">需要人工处理</h2>
+              <p id="modal-message"></p>
+            </div>
+          </div>
+          <div id="modal-context" class="modal-context" hidden></div>
+          <textarea id="approval-text" maxlength="120" hidden></textarea>
+          <div class="modal-actions" id="modal-actions"></div>
+        </div>
+      </section>
+    </div>
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  </body>
+</html>

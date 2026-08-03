@@ -3,12 +3,11 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from pathlib import Path
 from typing import Any
 
 from .ai import AIProvider
 from .automation import TaskRunner
-from .browser import BrowserSession, page_status
+from .browser import BrowserSession
 from .config import AIConfig
 from .paths import AppPaths
 from .probe import inspect_page, perform_action, save_snapshot
@@ -17,13 +16,9 @@ from .tasks import TaskConfig, TaskStatus, TaskStore, TERMINAL_STATUSES
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="小红书可观察终端机器人：真实浏览器、默认人工审核、异常立即停机"
+        description="小红书可观察机器人：本地控制台、批准或自动发送、异常立即停机"
     )
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
-    start = subparsers.add_parser("start", help="启动独立可见 Chromium，人工完成登录")
-    start.add_argument("--profile-dir", type=Path)
-    start.add_argument("--cdp-port", type=int, default=9229)
+    subparsers = parser.add_subparsers(dest="command")
 
     health = subparsers.add_parser("health", help="检查 .env、Provider、模型与 API 连通性")
     health.add_argument(
@@ -55,13 +50,13 @@ def build_parser() -> argparse.ArgumentParser:
     act.add_argument("--y", type=float)
 
     run = subparsers.add_parser(
-        "run", help="创建并运行关键词任务；默认每条草稿都在终端人工审核"
+        "run", help="创建并运行关键词任务；默认每条草稿都需批准"
     )
     run.add_argument("--keyword", required=True)
     run.add_argument("--max-notes", type=int, default=10)
     run.add_argument("--replies-min", type=int, default=1)
     run.add_argument("--replies-max", type=int, default=2)
-    run.add_argument("--send-mode", choices=("review", "auto"), default="review")
+    run.add_argument("--send-mode", choices=("approval", "auto"), default="approval")
     run.add_argument("--min-delay", type=float, default=3.0)
     run.add_argument("--max-delay", type=float, default=7.0)
     run.add_argument("--daily-write-limit", type=int, default=30)
@@ -78,8 +73,8 @@ def build_parser() -> argparse.ArgumentParser:
     pause = subparsers.add_parser("pause", help="请求暂停任务")
     pause.add_argument("task_id")
 
-    cancel = subparsers.add_parser("cancel", help="取消任务，取消后不可继续")
-    cancel.add_argument("task_id")
+    stop = subparsers.add_parser("stop", help="停止任务，停止后不可继续")
+    stop.add_argument("task_id")
 
     resolve = subparsers.add_parser("resolve", help="人工裁决上一次结果不确定的写入")
     resolve.add_argument("task_id")
@@ -96,20 +91,15 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
         sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
     args = build_parser().parse_args(argv)
-    paths = AppPaths()
-    session = BrowserSession(paths)
-    store = TaskStore(paths.tasks_dir)
     try:
-        if args.command == "start":
-            config = AIConfig.from_env_file()
-            provider = AIProvider(config)
-            print_json(
-                {
-                    "provider": provider.health(),
-                    "browser": session.start(args.profile_dir, args.cdp_port),
-                }
-            )
-        elif args.command == "health":
+        if args.command is None:
+            from .web.server import run_console
+
+            return run_console()
+        paths = AppPaths()
+        session = BrowserSession(paths)
+        store = TaskStore(paths.tasks_dir)
+        if args.command == "health":
             config = AIConfig.from_env_file()
             print_json(AIProvider(config).health(generate=args.generate))
         elif args.command == "models":
@@ -123,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
                 }
             )
         elif args.command == "status":
-            print_json(session.with_page(page_status))
+            print_json(session.status())
         elif args.command == "snapshot":
             print_json(
                 session.with_page(
@@ -155,7 +145,17 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.command == "run":
             ai_config = AIConfig.from_env_file()
+            browser_status = session.status()
+            if not browser_status["running"] or not browser_status.get("profile_id"):
+                raise RuntimeError("没有正在运行的浏览器资料，请先从工作台启动浏览器")
+            profile_id = str(browser_status["profile_id"])
+            existing = store.find_unfinished(profile_id)
+            if existing is not None:
+                raise RuntimeError(
+                    f"当前浏览器资料已有未结束任务 {existing.id}；请继续或停止该任务"
+                )
             config = TaskConfig(
+                profile_id=profile_id,
                 keyword=args.keyword,
                 max_notes=args.max_notes,
                 replies_min=args.replies_min,
@@ -171,6 +171,16 @@ def main(argv: list[str] | None = None) -> int:
             print_json(result.task.to_dict())
             return 0 if result.task.status != TaskStatus.FAILED else 1
         elif args.command == "resume":
+            task = store.load(args.task_id)
+            if task.status in TERMINAL_STATUSES:
+                raise ValueError(f"终态任务 {task.status.value} 不能继续")
+            if task.write_in_flight is not None:
+                raise ValueError("任务存在未决写入，请先裁决结果")
+            browser_status = session.status()
+            if not browser_status["running"]:
+                raise RuntimeError("浏览器未运行")
+            if browser_status.get("profile_id") != task.config.profile_id:
+                raise RuntimeError("当前浏览器资料与任务绑定资料不一致")
             ai_config = AIConfig.from_env_file()
             result = TaskRunner(session, store, ai_config).run(args.task_id)
             print(result.message)
@@ -182,12 +192,12 @@ def main(argv: list[str] | None = None) -> int:
             print_json([task.to_dict() for task in store.list()[: args.limit]])
         elif args.command == "task":
             print_json(store.load(args.task_id).to_dict())
-        elif args.command in {"pause", "cancel"}:
+        elif args.command in {"pause", "stop"}:
             task = store.load(args.task_id)
             if task.status in TERMINAL_STATUSES:
                 raise ValueError(f"终态任务 {task.status.value} 不能再修改")
-            status = TaskStatus.PAUSED if args.command == "pause" else TaskStatus.CANCELLED
-            reason = "用户请求暂停" if args.command == "pause" else "用户取消"
+            status = TaskStatus.PAUSED if args.command == "pause" else TaskStatus.STOPPED
+            reason = "用户请求暂停" if args.command == "pause" else "用户停止任务"
             task.set_status(status, reason=reason)
             store.save(task)
             print_json(task.to_dict())

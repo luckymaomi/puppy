@@ -1,128 +1,80 @@
-# xhs-robot
+<div align="center">
 
-`xhs-robot` 是 owner 自用的小红书终端机器人。它通过独立可见 Chromium 操作公开网页，使用独立 `.env` 中配置的 OpenAI-compatible Provider 根据当前可见笔记和评论生成草稿，并在验证码、登录失效、频率提示或结果不确定时立即停止，保留页面供人工接管。
+# XHS Robot
 
-默认模式会在每次发送前要求终端审核；只有显式指定 `--send-mode auto` 才会自动发送。
+### 维持账号活跃度的小红书机器人
 
-## 项目结构
+设定关键词和数量，自动完成每天的互动任务——搜索、点开、阅读、评论、回复、关闭、循环。
 
-```text
-app.py                  唯一终端入口
-xhs_robot/
-  ai.py                 AI 提示、生成与草稿边界
-  automation.py         任务循环、审核、限额和恢复
-  browser.py            独立浏览器进程与 CDP 会话
-  cli.py                命令解析与接线
-  config.py             .env 配置读取、类型转换与校验
-  evidence.py           脱敏证据与事件记录
-  page.py               动态页面发现、操作与结果核验
-  probe.py              单步实时探针
-  tasks.py              任务状态、去重和本地持久化
-tests/                  稳定业务结果测试
-```
+[技术规格](spec.md) · [快速开始](#快速开始) · [开发规则](AGENTS.md)
 
-根目录的 `XhsPost（人工）.py` 是 owner 指定保留且禁止修改的人工版本，不属于机器人入口。
+<p>
+  <a href="https://github.com/luckymaomi/xhs-robot/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/luckymaomi/xhs-robot?style=flat&amp;color=ca8a04"></a>
+  <img alt="Python" src="https://img.shields.io/badge/Python-%3E%3D3.12-3776AB">
+  <img alt="Playwright" src="https://img.shields.io/badge/Playwright-1.58-2EAD33">
+  <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-0.115-009688">
+  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-0f766e"></a>
+</p>
+</div>
 
-## 安装
+## 解决的需求
 
-要求 Windows 和 Python 3.12：
+小红书账号的权重依赖于日常互动行为。新账号需要积累活跃度，老账号需要维持互动频率，目标话题下需要持续出现。
 
-```powershell
-python -m pip install -r requirements.txt
-python -m playwright install chromium
-```
+平台对账号质量的判断依据之一，是账号是否产生正常的互动行为。在目标话题下评论和回复，向平台表明这是一个活跃的真实账号。账号权重通过这种行为累积，推荐流量也依赖这种维持。
 
-复制配置模板并填写真实 API Key：
+人工完成这些动作的路径是：打开小红书、搜索关键词、逐篇点开笔记、阅读正文和评论区、撰写评论、回复一两条已有评论、关闭详情、进入下一篇，重复数十次。每一步本身不复杂，但重复性极高，时间消耗显著，且需要持续执行。
 
-```powershell
-Copy-Item .env.example .env
-notepad .env
-```
+XHS Robot 自动化完成这个流程。设定关键词和目标数量后，系统自动执行搜索、浏览、评论和回复，完成每日互动任务。账号活跃度得以维持，目标话题下的曝光得以保持，重复性操作由系统接管。
 
-项目只从根目录 `.env` 读取 AI 配置，不读取进程环境变量，也不接受任务级模型参数。`.env` 已被 Git 忽略；可提交的 `.env.example` 包含全部字段、硅基流动默认值，以及最近一次真实 `/models` 返回的完整注释目录。
+## 运行方式
 
-当前默认配置使用硅基流动、`https://api.siliconflow.cn/v1`、Chat Completions 和 `Pro/zai-org/GLM-5.1`。查看当前 API Key 实际可见的全部模型、执行只读健康检查，或额外执行一次真实最小生成：
+系统启动一个真实 Chrome 浏览器实例，登录小红书账号后，通过页面控件完成浏览、点击和输入操作。所有交互发生在真实页面上，操作过程可见。
 
-```powershell
-python app.py models
-python app.py health
-python app.py health --generate
-```
+执行流程：
 
-`health` 会校验配置、鉴权、模型目录和默认模型可见性；`--generate` 会产生真实模型调用。所有命令只报告 `api_key_present`，不会输出密钥。
+1. 输入关键词，执行小红书搜索
+2. 从搜索结果逐篇打开笔记详情
+3. 读取笔记正文和评论区上下文
+4. 调用 AI 生成相关评论并提交
+5. 随机选择 1 到 2 条评论，分别生成回复并提交
+6. 关闭详情，返回搜索结果列表，进入下一篇
+7. 循环执行，直到达到设定的目标数量
 
-## 启动与登录
+验证码、登录失效或安全校验出现时，系统自动暂停并发出通知。人工处理完成后点击继续，任务恢复执行。
 
-```powershell
-python app.py start
-```
+## 永久免费
 
-`start` 会先执行 Provider 健康检查，再启动 Chromium；已经由本项目启动的同端口浏览器会直接复用。Chromium 会在命令退出后继续运行。请在可见浏览器中扫码或人工登录；验证码和安全校验始终由用户处理。浏览器资料、任务、AI 草稿和证据统一保存在 Git 忽略的 `.xhs-robot/`。
+XHS Robot 本体免费使用。只需准备自己的 API Key（OpenAI 或兼容接口），或接入本地模型。无按量计费，无云平台绑定，无限次使用，无限时运行。所有数据存储在本机。
 
-检查浏览器是否可连接：
+## 常用命令
 
-```powershell
-python app.py status
-```
+| 命令 | 用途 |
+| --- | --- |
+| `python app.py` | 打开本地工作台 |
+| `python app.py status` | 查看浏览器状态 |
+| `python app.py health` | 检查 AI 配置 |
+| `python app.py tasks` | 查看任务历史 |
+| `python app.py snapshot` | 保存当前页面证据 |
+| `python app.py inspect` | 探测当前页面结构 |
 
-## 运行任务
+## 本地工作台
 
-默认人工审核，最多处理 10 篇笔记，每篇随机回复 1 到 2 条已有评论：
+`python app.py` 在浏览器中打开本地工作台。工作台可以随时启动或停止专用 Chromium；停止浏览器或正常关闭工作台时，运行中的任务会保存为暂停状态，本地登录资料、任务和证据仍会保留。功能以模块化方式组织：
 
-```powershell
-python app.py run --keyword "AI Agent"
-```
+- **AI 配置**：设置 Provider、API Key 和模型，支持 OpenAI 兼容接口
+- **任务控制**：设定关键词、目标数量、回复数和发送模式，创建并启动任务
+- **浏览器控制**：启动、检查登录或完整停止专用浏览器
+- **执行日志**：直接展示搜索、打开笔记、读取上下文、点击发送、回复和关闭详情等真实执行事件
+- **证据回溯**：查看运行过程中的截图与页面快照
 
-审核时可发送、编辑、跳过或暂停当前草稿。明确允许自动发送时：
+## 两种运行模式
 
-```powershell
-python app.py run --keyword "AI Agent" --max-notes 5 --send-mode auto
-```
+| 模式 | 行为 |
+|:---:|---|
+| 手动批准 | AI 生成后在工作台展示预览，确认后才发送 |
+| 全自动 | 设定后连续执行，全程无需干预 |
 
-任务带有笔记与评论去重、每日写入硬上限、随机操作间隔和原子状态记录。常用控制命令：
+## License
 
-```powershell
-python app.py tasks
-python app.py task <task-id>
-python app.py pause <task-id>
-python app.py resume <task-id>
-python app.py cancel <task-id>
-```
-
-浏览器出现验证码、登录失效、频率提示或提交结果不确定时，任务会进入 `waiting_login` 或 `waiting_human`。结果不确定的写入不会自动重试：先检查可见页面，再明确裁决并继续。
-
-```powershell
-python app.py resolve <task-id> --result sent
-python app.py resolve <task-id> --result not-sent
-python app.py resume <task-id>
-```
-
-## 单步探针
-
-自动流程之外仍可逐步读取真实页面。每次页面重绘、滚动或路由变化后都要重新 `inspect`，临时 ID 只在当前 DOM 中有效：
-
-```powershell
-python app.py snapshot --stage current-page
-python app.py inspect interactive
-python app.py inspect scroll
-python app.py inspect links
-python app.py inspect detail
-python app.py act click --id node-123
-python app.py act fill --id node-124 --value "AI Agent"
-python app.py act press --id node-124 --value Enter
-python app.py act scroll --id window --delta 700
-```
-
-`snapshot --full-page` 可能改变虚拟列表的滚动现场，只用于基线采集。
-
-## 验证
-
-项目完整静态验证：
-
-```powershell
-python -W error -m compileall -q app.py xhs_robot tests
-python -m pytest
-python app.py --help
-```
-
-2026-08-02 已真实验证硅基流动鉴权、91 个模型的动态目录、`Pro/zai-org/GLM-5.1` 可见性和 Chat Completions 最小生成。旧探针会话还真实验证过关键词搜索与虚拟列表增量滚动、图片笔记详情、单次回复、点赞恢复和遮罩关闭。当前包结构下的完整“搜索 -> 评论 -> 随机回复 -> 下一篇”链路、视频详情、验证码暂停恢复、收藏和关注尚未在新的真实登录会话中重新验证；仓库测试不能替代该外部验证。
+[MIT](LICENSE)

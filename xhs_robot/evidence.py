@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -30,7 +31,12 @@ def redact_text(value: str) -> str:
 
 
 class EvidenceStore:
-    def __init__(self, root: Path, run_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        root: Path,
+        run_dir: Path | None = None,
+        event_sink: Callable[[dict[str, Any]], None] | None = None,
+    ) -> None:
         if run_dir is None:
             run_id = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
             self.run_dir = root / run_id
@@ -40,16 +46,29 @@ class EvidenceStore:
             self.run_dir.mkdir(parents=True, exist_ok=True)
         self.events_path = self.run_dir / "events.jsonl"
         self.summary_path = self.run_dir / "summary.json"
+        self.event_sink = event_sink
+        self._context: dict[str, Any] = {}
+
+    def bind(self, **context: Any) -> None:
+        self._context.update(context)
 
     def event(self, event_type: str, **data: Any) -> None:
-        record = {
-            "time": datetime.now().astimezone().isoformat(timespec="seconds"),
-            "type": event_type,
-            **self._sanitize(data),
-        }
+        record = self._sanitize(
+            {
+                "time": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "type": event_type,
+                **self._context,
+                **data,
+            }
+        )
         with self.events_path.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(record, ensure_ascii=False) + "\n")
             stream.flush()
+        if self.event_sink is not None:
+            try:
+                self.event_sink(dict(record))
+            except Exception:
+                pass
 
     def write_summary(self, summary: dict[str, Any]) -> None:
         self._write_json(self.summary_path, self._sanitize(summary))

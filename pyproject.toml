@@ -10,13 +10,18 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 dependencies = [
+  "fastapi==0.115.6",
   "openai==2.52.0",
   "playwright==1.58.0",
   "python-dotenv==1.2.2",
+  "uvicorn==0.34.0",
 ]
 
 [tool.setuptools.packages.find]
 include = ["xhs_robot*"]
+
+[tool.setuptools.package-data]
+"xhs_robot.web" = ["public/*.html", "public/*.js", "public/*.css"]
 
 [tool.pytest.ini_options]
 addopts = "-q"

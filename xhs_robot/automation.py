@@ -5,7 +5,7 @@ import random
 import sys
 import time
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from .ai import AIContentGenerator, GenerationContext, GenerationError, validate_draft
 from .browser import BrowserSession
@@ -49,11 +49,13 @@ class TaskRunner:
         store: TaskStore,
         ai_config: AIConfig | None = None,
         generator_factory: Any = AIContentGenerator,
+        control_status: Callable[[str], tuple[TaskStatus, str] | None] | None = None,
     ) -> None:
         self.session = session
         self.store = store
         self.ai_config = ai_config
         self.generator_factory = generator_factory
+        self.control_status = control_status
         self.random = random.SystemRandom()
 
     def run(self, task_id: str) -> RunResult:
@@ -61,6 +63,11 @@ class TaskRunner:
             task = self.store.load(task_id)
             if task.status in TERMINAL_STATUSES:
                 return RunResult(task, f"任务已经处于终态: {task.status.value}")
+            session_issue = self._session_issue(task)
+            if session_issue is not None:
+                task.set_status(TaskStatus.PAUSED, reason=session_issue)
+                self.store.save(task)
+                return RunResult(task, session_issue)
             task.set_status(TaskStatus.RUNNING)
             self.store.save(task)
 
@@ -75,10 +82,16 @@ class TaskRunner:
                 self.store.save(task)
                 return RunResult(task, "任务已暂停，可使用 resume 继续")
             except GenerationError as exc:
+                stopped = self._external_stop_result(task_id)
+                if stopped is not None:
+                    return stopped
                 task.set_status(TaskStatus.PAUSED, reason="AI 服务不可用", error=str(exc))
                 self.store.save(task)
                 return RunResult(task, f"AI 服务不可用，任务已暂停: {exc}")
             except HumanInterventionRequired as exc:
+                stopped = self._external_stop_result(task_id)
+                if stopped is not None:
+                    return stopped
                 status = (
                     TaskStatus.WAITING_LOGIN
                     if exc.gate == PageGate.LOGIN
@@ -88,6 +101,17 @@ class TaskRunner:
                 self.store.save(task)
                 return RunResult(task, f"任务等待人工处理: {exc}")
             except InteractionUncertain as exc:
+                stopped = self._external_stop_result(task_id)
+                if stopped is not None:
+                    return stopped
+                if self._browser_is_stopped():
+                    task.set_status(
+                        TaskStatus.PAUSED,
+                        reason="浏览器已关闭；重新启动任务绑定的浏览器后可继续",
+                        error=str(exc),
+                    )
+                    self.store.save(task)
+                    return RunResult(task, "浏览器已关闭，任务已暂停")
                 task.set_status(TaskStatus.WAITING_HUMAN, reason="页面结果不确定", error=str(exc))
                 self.store.save(task)
                 return RunResult(task, f"页面结果不确定，已停止且不会自动重试: {exc}")
@@ -97,6 +121,17 @@ class TaskRunner:
                 self.store.save(task)
                 return RunResult(task, str(exc))
             except Exception as exc:
+                stopped = self._external_stop_result(task_id)
+                if stopped is not None:
+                    return stopped
+                if self._browser_is_stopped():
+                    task.set_status(
+                        TaskStatus.PAUSED,
+                        reason="浏览器已关闭；重新启动任务绑定的浏览器后可继续",
+                        error=f"{type(exc).__name__}: {exc}",
+                    )
+                    self.store.save(task)
+                    return RunResult(task, "浏览器已关闭，任务已暂停")
                 task.set_status(TaskStatus.FAILED, reason="执行器失败", error=f"{type(exc).__name__}: {exc}")
                 self.store.save(task)
                 return RunResult(task, f"任务失败: {type(exc).__name__}: {exc}")
@@ -104,9 +139,21 @@ class TaskRunner:
     def _run_with_stop_evidence(
         self, task: TaskState, page: Any, evidence: EvidenceStore
     ) -> RunResult:
+        evidence.bind(task_id=task.id)
+        evidence.event(
+            "task_execution_started",
+            keyword=task.config.keyword,
+            max_notes=task.config.max_notes,
+            send_mode=task.config.send_mode,
+        )
         try:
             return self._run_on_page(task, page, evidence)
-        except BaseException:
+        except BaseException as exc:
+            evidence.event(
+                "task_execution_stopped",
+                error_type=type(exc).__name__,
+                message=str(exc),
+            )
             try:
                 evidence.save_viewport(f"stopped-{int(time.time() * 1000)}", page)
             except Exception:
@@ -133,8 +180,8 @@ class TaskRunner:
             raise GenerationError("当前任务没有加载 .env AI 配置")
         generator = self.generator_factory(self.ai_config)
         if not task.discovered_note_ids and not task.current_note_id:
-            page.search(task.config.keyword)
-            self._merge_discovered(task, page.collect_note_links())
+            self._merge_discovered(task, page.search(task.config.keyword))
+            self.store.save(task)
 
         while len(task.processed_note_ids) < task.config.max_notes:
             self._honor_external_control(task)
@@ -162,6 +209,12 @@ class TaskRunner:
 
         task.set_status(TaskStatus.COMPLETE, reason="达到任务笔记上限")
         self.store.save(task)
+        evidence.event(
+            "task_completed",
+            processed_count=len(task.processed_note_ids),
+            comment_count=task.comment_count,
+            reply_count=task.reply_count,
+        )
         evidence.write_summary(task.to_dict())
         return RunResult(task, f"任务完成，已处理 {len(task.processed_note_ids)} 篇笔记")
 
@@ -170,6 +223,9 @@ class TaskRunner:
         for note_id in task.discovered_note_ids:
             if note_id not in processed:
                 return note_id
+
+        if not task.discovered_note_ids:
+            raise InteractionUncertain("搜索结果中没有识别到可处理的笔记，未执行写入")
 
         stagnant_rounds = 0
         previous_count = len(task.discovered_note_ids)
@@ -205,8 +261,9 @@ class TaskRunner:
         context: NoteContext,
         generator: ContentGenerator,
     ) -> None:
+        evidence = getattr(page, "evidence", None)
         if context.note_id not in task.commented_note_ids:
-            draft = self._comment_draft(task, context, generator)
+            draft = self._comment_draft(task, context, generator, evidence)
             if draft is None:
                 raise SkipItem()
             self._before_write(task)
@@ -245,7 +302,7 @@ class TaskRunner:
             )
         for comment in self.random.sample(candidates, remaining):
             self._honor_external_control(task)
-            draft = self._reply_draft(task, context, comment, generator)
+            draft = self._reply_draft(task, context, comment, generator, evidence)
             key = self._comment_key(context.note_id, comment)
             if draft is None:
                 task.replied_comment_keys.append(key)
@@ -261,12 +318,20 @@ class TaskRunner:
             self._delay(task)
 
     def _comment_draft(
-        self, task: TaskState, context: NoteContext, generator: ContentGenerator
+        self,
+        task: TaskState,
+        context: NoteContext,
+        generator: ContentGenerator,
+        evidence: EvidenceStore | None,
     ) -> str | None:
         pending = task.pending_draft
         if pending and pending.kind == "comment" and pending.note_id == context.note_id:
             draft = pending.text
         else:
+            if evidence is not None:
+                evidence.event(
+                    "generation_requested", kind="comment", note_id=context.note_id
+                )
             draft = generator.generate_comment(
                 GenerationContext(
                     note_text=context.text,
@@ -275,7 +340,11 @@ class TaskRunner:
             )
             task.pending_draft = PendingDraft("comment", draft, context.note_id)
             self.store.save(task)
-        return self._review(task, draft, "comment", context.text)
+            if evidence is not None:
+                evidence.event(
+                    "draft_ready", kind="comment", note_id=context.note_id, text=draft
+                )
+        return self._approve(task, draft, "comment", context.text)
 
     def _reply_draft(
         self,
@@ -283,6 +352,7 @@ class TaskRunner:
         context: NoteContext,
         comment: VisibleComment,
         generator: ContentGenerator,
+        evidence: EvidenceStore | None,
     ) -> str | None:
         pending = task.pending_draft
         if (
@@ -293,6 +363,13 @@ class TaskRunner:
         ):
             draft = pending.text
         else:
+            if evidence is not None:
+                evidence.event(
+                    "generation_requested",
+                    kind="reply",
+                    note_id=context.note_id,
+                    comment_id=comment.comment_id,
+                )
             draft = generator.generate_reply(
                 GenerationContext(
                     note_text=context.text,
@@ -309,17 +386,34 @@ class TaskRunner:
                 self._comment_key(context.note_id, comment),
             )
             self.store.save(task)
-        return self._review(task, draft, "reply", comment.text)
+            if evidence is not None:
+                evidence.event(
+                    "draft_ready",
+                    kind="reply",
+                    note_id=context.note_id,
+                    comment_id=comment.comment_id,
+                    text=draft,
+                )
+        return self._approve(task, draft, "reply", comment.text)
 
-    def _review(
+    def _approve(
         self, task: TaskState, draft: str, kind: str, target_text: str
     ) -> str | None:
         if task.config.send_mode == "auto":
             return draft
-        task.set_status(TaskStatus.WAITING_REVIEW, reason="等待终端审核草稿")
+        if task.pending_draft and task.pending_draft.approval_status == "approved":
+            task.set_status(TaskStatus.RUNNING)
+            self.store.save(task)
+            return draft
+        if task.pending_draft and task.pending_draft.approval_status == "skipped":
+            task.pending_draft = None
+            task.set_status(TaskStatus.RUNNING)
+            self.store.save(task)
+            return None
+        task.set_status(TaskStatus.WAITING_APPROVAL, reason="等待批准草稿")
         self.store.save(task)
         if not sys.stdin.isatty():
-            raise PauseRun("当前终端不可交互，草稿已保存；请在交互终端使用 resume")
+            raise PauseRun("当前终端不可交互，草稿已保存；请在控制台批准")
 
         label = "笔记评论" if kind == "comment" else "评论回复"
         print(f"\n[{label}] 上下文: {target_text[:240]}")
@@ -327,6 +421,8 @@ class TaskRunner:
         while True:
             choice = input("发送 [Enter/y]、编辑 [e]、跳过 [s]、暂停 [p]: ").strip().lower()
             if choice in {"", "y", "yes"}:
+                if task.pending_draft:
+                    task.pending_draft.approval_status = "approved"
                 task.set_status(TaskStatus.RUNNING)
                 self.store.save(task)
                 return draft
@@ -344,9 +440,9 @@ class TaskRunner:
                 self.store.save(task)
                 return None
             if choice == "p":
-                task.set_status(TaskStatus.PAUSED, reason="用户在审核时暂停")
+                task.set_status(TaskStatus.PAUSED, reason="用户在批准时暂停")
                 self.store.save(task)
-                raise PauseRun("任务已在草稿审核阶段暂停")
+                raise PauseRun("任务已在草稿批准阶段暂停")
             print("请输入 y、e、s 或 p")
 
     def _before_write(self, task: TaskState) -> None:
@@ -355,16 +451,58 @@ class TaskRunner:
             raise PauseRun(f"已达到每日写入硬上限 {task.config.daily_write_limit}")
 
     def _honor_external_control(self, task: TaskState) -> None:
+        requested = self.control_status(task.id) if self.control_status else None
+        if requested is not None:
+            status, reason = requested
+            task.set_status(status, reason=reason)
+            raise PauseRun(reason)
         current = self.store.load(task.id)
-        if current.status == TaskStatus.CANCELLED:
-            task.set_status(TaskStatus.CANCELLED, reason="用户取消")
-            raise PauseRun("任务已取消")
+        if current.status == TaskStatus.STOPPED:
+            task.set_status(
+                TaskStatus.STOPPED, reason=current.stop_reason or "用户停止任务"
+            )
+            raise PauseRun("任务已停止")
         if current.status == TaskStatus.PAUSED and task.status != TaskStatus.PAUSED:
-            task.set_status(TaskStatus.PAUSED, reason="用户暂停")
-            raise PauseRun("任务已暂停")
+            reason = current.stop_reason or "用户暂停"
+            task.set_status(TaskStatus.PAUSED, reason=reason)
+            raise PauseRun(reason)
 
     def _delay(self, task: TaskState) -> None:
         time.sleep(self.random.uniform(task.config.min_delay, task.config.max_delay))
+
+    def _external_stop_result(self, task_id: str) -> RunResult | None:
+        requested = self.control_status(task_id) if self.control_status else None
+        current = self.store.load(task_id)
+        if requested is not None and current.status not in TERMINAL_STATUSES:
+            status, reason = requested
+            current.set_status(status, reason=reason)
+            self.store.save(current)
+            return RunResult(current, reason)
+        if current.status == TaskStatus.PAUSED:
+            return RunResult(current, current.stop_reason or "任务已暂停")
+        if current.status == TaskStatus.STOPPED:
+            return RunResult(current, current.stop_reason or "任务已停止")
+        return None
+
+    def _session_issue(self, task: TaskState) -> str | None:
+        read_status = getattr(self.session, "status", None)
+        if not callable(read_status):
+            return None
+        status = read_status()
+        if not status.get("running"):
+            return "任务绑定的浏览器未启动"
+        if status.get("profile_id") != task.config.profile_id:
+            return "当前浏览器资料与任务绑定资料不一致"
+        return None
+
+    def _browser_is_stopped(self) -> bool:
+        read_status = getattr(self.session, "status", None)
+        if not callable(read_status):
+            return False
+        try:
+            return not bool(read_status().get("running"))
+        except Exception:
+            return False
 
     @staticmethod
     def _comment_key(note_id: str, comment: VisibleComment) -> str:
