@@ -26,7 +26,7 @@ def run_console() -> int:
     port = int(listener.getsockname()[1])
     url = f"http://127.0.0.1:{port}/?token={token}"
 
-    print("xhs-robot 控制台已启动", flush=True)
+    print("Puppy 控制台已启动", flush=True)
     print(url, flush=True)
     opener = threading.Timer(0.4, lambda: webbrowser.open(url))
     opener.daemon = True

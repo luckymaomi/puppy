@@ -51,7 +51,7 @@ function element(id) {
 async function api(path, options = {}) {
   if (!token) throw new Error("控制台访问凭证缺失，请重新运行 python app.py");
   const headers = new Headers(options.headers || {});
-  headers.set("x-xhs-token", token);
+  headers.set("x-puppy-token", token);
   if (options.body) headers.set("content-type", "application/json");
   const response = await fetch(path, {...options, headers});
   const contentType = response.headers.get("content-type") || "";

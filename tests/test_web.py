@@ -1,11 +1,11 @@
 from fastapi.testclient import TestClient
 
-from xhs_robot.config import AIConfigStore
-from xhs_robot.page import PageGate
-from xhs_robot.paths import AppPaths
-from xhs_robot.tasks import TaskConfig, TaskStatus, TaskStore
-from xhs_robot.web.api import create_app
-from xhs_robot.web.supervisor import EventBroker
+from puppy.config import AIConfigStore
+from puppy.page import PageGate
+from puppy.paths import AppPaths
+from puppy.tasks import TaskConfig, TaskStatus, TaskStore
+from puppy.web.api import create_app
+from puppy.web.supervisor import EventBroker
 
 
 VALID_ENV = """XHS_PROVIDER=siliconflow
@@ -85,7 +85,7 @@ def test_bootstrap_requires_token_and_projects_waiting_human_task(tmp_path) -> N
     with TestClient(app) as client:
         assert client.get("/api/bootstrap").status_code == 401
         response = client.get(
-            "/api/bootstrap", headers={"x-xhs-token": "local-token"}
+            "/api/bootstrap", headers={"x-puppy-token": "local-token"}
         )
 
     assert response.status_code == 200
@@ -106,7 +106,7 @@ def test_human_confirmation_rechecks_gate_before_resuming(tmp_path) -> None:
     with TestClient(app) as client:
         blocked = client.post(
             f"/api/tasks/{task.id}/resume",
-            headers={"x-xhs-token": "local-token"},
+            headers={"x-puppy-token": "local-token"},
         )
         assert blocked.status_code == 409
         assert supervisor.started == []
@@ -114,7 +114,7 @@ def test_human_confirmation_rechecks_gate_before_resuming(tmp_path) -> None:
         app.state.context.browser.with_page = lambda callback: (PageGate.READY, None)
         resumed = client.post(
             f"/api/tasks/{task.id}/resume",
-            headers={"x-xhs-token": "local-token"},
+            headers={"x-puppy-token": "local-token"},
         )
 
     assert resumed.status_code == 202
@@ -148,7 +148,7 @@ def test_stopping_browser_pauses_current_task_and_closes_session(tmp_path) -> No
     with TestClient(app) as client:
         response = client.post(
             "/api/browser/stop",
-            headers={"x-xhs-token": "local-token"},
+            headers={"x-puppy-token": "local-token"},
         )
 
     assert response.status_code == 200
@@ -169,7 +169,7 @@ def test_stopping_task_is_terminal_and_does_not_stop_browser(tmp_path) -> None:
     with TestClient(app) as client:
         response = client.post(
             f"/api/tasks/{task.id}/stop",
-            headers={"x-xhs-token": "local-token"},
+            headers={"x-puppy-token": "local-token"},
         )
 
     assert response.status_code == 200

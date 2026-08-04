@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from xhs_robot.config import AIConfigStore, ConfigurationError
+from puppy.config import AIConfigStore, ConfigurationError
 
 
 VALID_ENV = """# keep this comment

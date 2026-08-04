@@ -3,8 +3,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from xhs_robot.ai import AIContentGenerator, AIProvider, GenerationContext, validate_draft
-from xhs_robot.config import AIConfig, ConfigurationError
+from puppy.ai import AIContentGenerator, AIProvider, GenerationContext, validate_draft
+from puppy.config import AIConfig, ConfigurationError
 
 
 def config(api_key: str = "sk-test-secret-value") -> AIConfig:

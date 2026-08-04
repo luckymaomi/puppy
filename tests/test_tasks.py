@@ -2,7 +2,7 @@ from datetime import datetime
 
 import pytest
 
-from xhs_robot.tasks import PendingDraft, TaskConfig, TaskState, TaskStatus, TaskStore
+from puppy.tasks import PendingDraft, TaskConfig, TaskState, TaskStatus, TaskStore
 
 
 def test_task_store_round_trip_and_daily_write_limit_input(tmp_path) -> None:

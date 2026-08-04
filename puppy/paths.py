@@ -6,7 +6,7 @@ from pathlib import Path
 
 @dataclass(frozen=True, slots=True)
 class AppPaths:
-    root: Path = Path(".xhs-robot")
+    root: Path = Path(".puppy")
 
     @property
     def session_file(self) -> Path:

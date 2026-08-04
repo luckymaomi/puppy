@@ -1,7 +1,7 @@
-from xhs_robot.ai import GenerationError
-from xhs_robot.automation import TaskRunner
-from xhs_robot.page import NoteContext, VisibleComment
-from xhs_robot.tasks import PendingDraft, TaskConfig, TaskStatus, TaskStore
+from puppy.ai import GenerationError
+from puppy.automation import TaskRunner
+from puppy.page import NoteContext, VisibleComment
+from puppy.tasks import PendingDraft, TaskConfig, TaskStatus, TaskStore
 
 
 class FakeGenerator:

@@ -1,6 +1,6 @@
 <div align="center">
 
-# XHS Robot
+# Puppy
 
 ### 维持账号活跃度的小红书机器人
 
@@ -9,7 +9,7 @@
 [技术规格](spec.md) · [快速开始](#快速开始) · [开发规则](AGENTS.md)
 
 <p>
-  <a href="https://github.com/luckymaomi/xhs-robot/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/luckymaomi/xhs-robot?style=flat&amp;color=ca8a04"></a>
+  <a href="https://github.com/luckymaomi/puppy/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/luckymaomi/puppy?style=flat&amp;color=ca8a04"></a>
   <img alt="Python" src="https://img.shields.io/badge/Python-%3E%3D3.12-3776AB">
   <img alt="Playwright" src="https://img.shields.io/badge/Playwright-1.58-2EAD33">
   <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-0.115-009688">
@@ -25,7 +25,7 @@
 
 人工完成这些动作的路径是：打开小红书、搜索关键词、逐篇点开笔记、阅读正文和评论区、撰写评论、回复一两条已有评论、关闭详情、进入下一篇，重复数十次。每一步本身不复杂，但重复性极高，时间消耗显著，且需要持续执行。
 
-XHS Robot 自动化完成这个流程。设定关键词和目标数量后，系统自动执行搜索、浏览、评论和回复，完成每日互动任务。账号活跃度得以维持，目标话题下的曝光得以保持，重复性操作由系统接管。
+Puppy 自动化完成这个流程。设定关键词和目标数量后，系统自动执行搜索、浏览、评论和回复，完成每日互动任务。账号活跃度得以维持，目标话题下的曝光得以保持，重复性操作由系统接管。
 
 ## 运行方式
 
@@ -45,7 +45,7 @@ XHS Robot 自动化完成这个流程。设定关键词和目标数量后，系�
 
 ## 永久免费
 
-XHS Robot 本体免费使用。只需准备自己的 API Key（OpenAI 或兼容接口），或接入本地模型。无按量计费，无云平台绑定，无限次使用，无限时运行。所有数据存储在本机。
+Puppy 本体免费使用。只需准备自己的 API Key（OpenAI 或兼容接口），或接入本地模型。无按量计费，无云平台绑定，无限次使用，无限时运行。所有数据存储在本机。
 
 ## 常用命令
 

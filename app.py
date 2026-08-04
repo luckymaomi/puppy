@@ -1,4 +1,4 @@
-from xhs_robot.cli import main
+from puppy.cli import main
 
 
 if __name__ == "__main__":

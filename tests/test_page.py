@@ -1,4 +1,4 @@
-from xhs_robot.page import NOTE_PATH_PATTERN, PageGate, classify_page
+from puppy.page import NOTE_PATH_PATTERN, PageGate, classify_page
 
 
 def test_page_gate_stops_for_security_challenge_before_any_action() -> None:

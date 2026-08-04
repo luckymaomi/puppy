@@ -9,7 +9,7 @@ description: 探测和维护小红书真实网页交互。用于人工登录、P
 
 ## 开始前
 
-1. 读取根目录 `AGENTS.md`、`spec.md` 和 `.agents/skills/xhs-robot-dev/SKILL.md`。
+1. 读取根目录 `AGENTS.md`、`spec.md` 和 `.agents/skills/puppy-dev/SKILL.md`。
 2. 检查工作区、Python/Playwright 环境、当前入口和本地浏览器会话。保留 `XhsPost（人工）.py`，不得修改、迁移或删除。
 3. 明确关键词、样本上限和写入边界。真实写入操作在当前账号登录会话的权限范围内执行，系统不限制目标笔记的归属关系。
 4. 把截图、HTML、页面文本和浏览器资料放入 Git 忽略的 `.xhs-probe/`，不得提交登录态或个人数据。
@@ -126,7 +126,7 @@ description: 探测和维护小红书真实网页交互。用于人工登录、P
 
 ## 验证与交付
 
-1. 运行 `python -W error -m compileall -q app.py xhs_robot tests`。
+1. 运行 `python -W error -m compileall -q app.py puppy tests`。
 2. 运行 `python -m pytest` 和 `python app.py --help`，确认默认审核和显式自动发送边界清楚。
 3. 在真实登录页面完成一个搜索、容器发现和至少两轮有效滚动；报告关键词、累计唯一笔记数、滚动对象和停止原因。
 4. 分别报告图片、视频、评论区和人工接管的已验证与未验证项，不制造测试。

@@ -1,6 +1,6 @@
 ---
 name: plan
-description: 仅当 owner 明确要求 xhs-robot 使用专业开发模式、使用 plan.md、按计划开发或继续当前计划时，编写和执行单文件 plan.md；不得因任务复杂、跨模块、耗时或风险高自动触发。
+description: 仅当 owner 明确要求 Puppy 使用专业开发模式、使用 plan.md、按计划开发或继续当前计划时，编写和执行单文件 plan.md；不得因任务复杂、跨模块、耗时或风险高自动触发。
 ---
 
 # Plan
@@ -10,7 +10,7 @@ description: 仅当 owner 明确要求 xhs-robot 使用专业开发模式、使�
 ## 触发后先做
 
 1. 读取根目录 `AGENTS.md`。
-2. 读取 `.agents/skills/xhs-robot-dev/SKILL.md`。
+2. 读取 `.agents/skills/puppy-dev/SKILL.md`。
 3. 调查当前仓库、工作区、实现、测试、文档和运行事实。
 4. 已有 `plan.md` 属于当前任务时更新；不属于时先向 owner 确认是否替换。
 5. 没有当前计划时，以 `plan.example.md` 为结构参考创建根目录 `plan.md`。

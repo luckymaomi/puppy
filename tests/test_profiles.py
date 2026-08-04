@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from xhs_robot.paths import AppPaths
-from xhs_robot.profiles import BrowserProfileStore
+from puppy.paths import AppPaths
+from puppy.profiles import BrowserProfileStore
 
 
 def test_browser_profiles_keep_default_login_and_create_isolated_profiles(tmp_path) -> None:

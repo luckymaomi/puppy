@@ -123,7 +123,7 @@ def create_app(
                 browser.close()
 
     app = FastAPI(
-        title="xhs-robot",
+        title="Puppy",
         docs_url=None,
         redoc_url=None,
         lifespan=lifespan,
@@ -158,7 +158,7 @@ def create_app(
     @app.middleware("http")
     async def protect_local_api(request: Request, call_next):
         if request.url.path.startswith("/api/"):
-            provided = request.headers.get("x-xhs-token") or request.query_params.get(
+            provided = request.headers.get("x-puppy-token") or request.query_params.get(
                 "token"
             )
             if not provided or not secrets.compare_digest(provided, token):

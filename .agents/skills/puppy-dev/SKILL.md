@@ -1,9 +1,9 @@
 ---
-name: xhs-robot-dev
-description: 维护 xhs-robot 项目时使用。适用于修改实现、接口、数据、测试、事实文档、依赖、构建和运行配置，要求先确认事实，再完成实现、验证、文档同步与交付闭环。
+name: puppy-dev
+description: 维护 Puppy 项目时使用。适用于修改实现、接口、数据、测试、事实文档、依赖、构建和运行配置，要求先确认事实，再完成实现、验证、文档同步与交付闭环。
 ---
 
-# xhs-robot Development
+# Puppy Development
 
 在本项目发生开发性修改时使用本 skill。
 
@@ -52,7 +52,7 @@ description: 维护 xhs-robot 项目时使用。适用于修改实现、接口�
 
 ## 完整验证
 
-- `python -W error -m compileall -q app.py xhs_robot tests`
+- `python -W error -m compileall -q app.py puppy tests`
 - `python -m pytest`
 - `python app.py --help`
 

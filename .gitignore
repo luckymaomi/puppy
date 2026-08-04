@@ -19,7 +19,7 @@ __pycache__/
 *.log
 
 # Current runtime data: browser profile, tasks, drafts and evidence
-.xhs-robot/
+.puppy/
 
 # Old local probe data may still contain account material
 .xhs-probe/
