@@ -1,0 +1,4 @@
+interface:
+  display_name: "哔哩哔哩页面探针"
+  short_description: "探测哔哩哔哩匿名搜索、视频详情、多层评论与专栏边界流程"
+  default_prompt: "Use $bilibili-page-probe to inspect public Bilibili pages anonymously and preserve local page evidence."
