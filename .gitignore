@@ -18,8 +18,11 @@ __pycache__/
 # Logs
 *.log
 
-# Current runtime data: browser profile, tasks, drafts and evidence
+# Current runtime data: temporary browser session, tasks, observations and evidence
 .puppy/
+
+# Current raw probe evidence
+.puppy-probe/
 
 # Old local probe data may still contain account material
 .xhs-probe/

@@ -16,13 +16,13 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_ENV_FILE = PROJECT_ROOT / ".env"
 SUPPORTED_API_STYLES = {"chat_completions", "responses"}
 CONFIG_KEYS = (
-    "XHS_PROVIDER",
-    "XHS_API_KEY",
-    "XHS_BASE_URL",
-    "XHS_MODEL",
-    "XHS_API_STYLE",
-    "XHS_REQUEST_TIMEOUT_SECONDS",
-    "XHS_MAX_OUTPUT_TOKENS",
+    "PUPPY_AI_PROVIDER",
+    "PUPPY_AI_API_KEY",
+    "PUPPY_AI_BASE_URL",
+    "PUPPY_AI_MODEL",
+    "PUPPY_AI_API_STYLE",
+    "PUPPY_AI_REQUEST_TIMEOUT_SECONDS",
+    "PUPPY_AI_MAX_OUTPUT_TOKENS",
 )
 
 
@@ -61,30 +61,30 @@ class AIConfig:
                 raise ConfigurationError(f"{source} 缺少必填配置 {name}")
             return value.strip()
 
-        provider = required("XHS_PROVIDER").lower()
-        api_key = required("XHS_API_KEY")
-        base_url = required("XHS_BASE_URL").rstrip("/")
-        model = required("XHS_MODEL")
-        api_style = required("XHS_API_STYLE").lower()
+        provider = required("PUPPY_AI_PROVIDER").lower()
+        api_key = required("PUPPY_AI_API_KEY")
+        base_url = required("PUPPY_AI_BASE_URL").rstrip("/")
+        model = required("PUPPY_AI_MODEL")
+        api_style = required("PUPPY_AI_API_STYLE").lower()
 
         if api_key.lower().startswith(("replace-", "your-", "example-")):
-            raise ConfigurationError("XHS_API_KEY 仍是模板占位值")
+            raise ConfigurationError("PUPPY_AI_API_KEY 仍是模板占位值")
         parsed_url = urlsplit(base_url)
         if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
-            raise ConfigurationError("XHS_BASE_URL 必须是有效的 http(s) URL")
+            raise ConfigurationError("PUPPY_AI_BASE_URL 必须是有效的 http(s) URL")
         if parsed_url.username or parsed_url.password:
-            raise ConfigurationError("XHS_BASE_URL 不能包含用户名或密码")
+            raise ConfigurationError("PUPPY_AI_BASE_URL 不能包含用户名或密码")
         if parsed_url.query or parsed_url.fragment:
-            raise ConfigurationError("XHS_BASE_URL 不能包含查询参数或片段")
+            raise ConfigurationError("PUPPY_AI_BASE_URL 不能包含查询参数或片段")
         if api_style not in SUPPORTED_API_STYLES:
             choices = ", ".join(sorted(SUPPORTED_API_STYLES))
-            raise ConfigurationError(f"XHS_API_STYLE 只能是 {choices}")
+            raise ConfigurationError(f"PUPPY_AI_API_STYLE 只能是 {choices}")
 
         timeout = _number(
-            values, "XHS_REQUEST_TIMEOUT_SECONDS", minimum=1, maximum=300
+            values, "PUPPY_AI_REQUEST_TIMEOUT_SECONDS", minimum=1, maximum=300
         )
         max_tokens = _integer(
-            values, "XHS_MAX_OUTPUT_TOKENS", minimum=1, maximum=4096
+            values, "PUPPY_AI_MAX_OUTPUT_TOKENS", minimum=1, maximum=4096
         )
         return cls(
             provider=provider,
@@ -128,7 +128,7 @@ class AIConfigStore:
         self.ensure()
         values = self._read_values()
         public_values = {
-            key: "" if key == "XHS_API_KEY" else str(values.get(key) or "")
+            key: "" if key == "PUPPY_AI_API_KEY" else str(values.get(key) or "")
             for key in CONFIG_KEYS
         }
         error: str | None = None
@@ -139,7 +139,7 @@ class AIConfigStore:
         return {
             "file": self.path.name,
             "values": public_values,
-            "api_key_present": bool(str(values.get("XHS_API_KEY") or "").strip()),
+            "api_key_present": bool(str(values.get("PUPPY_AI_API_KEY") or "").strip()),
             "ready": error is None,
             "error": error,
         }
@@ -160,18 +160,18 @@ class AIConfigStore:
             value = str(raw if raw is not None else "").strip()
             if "\r" in value or "\n" in value:
                 raise ConfigurationError(f"{key} 必须是单行配置")
-            if key == "XHS_API_KEY" and not value and not clear_api_key:
+            if key == "PUPPY_AI_API_KEY" and not value and not clear_api_key:
                 continue
             normalized[key] = value
         if clear_api_key:
-            normalized["XHS_API_KEY"] = ""
+            normalized["PUPPY_AI_API_KEY"] = ""
 
         current = self.path.read_text(encoding="utf-8")
         candidate = _update_env_text(current, normalized)
         parsed = dotenv_values(stream=StringIO(candidate), interpolate=False)
         validation_values = dict(parsed)
-        if clear_api_key and not str(validation_values.get("XHS_API_KEY") or ""):
-            validation_values["XHS_API_KEY"] = "sk-explicitly-cleared"
+        if clear_api_key and not str(validation_values.get("PUPPY_AI_API_KEY") or ""):
+            validation_values["PUPPY_AI_API_KEY"] = "sk-explicitly-cleared"
         AIConfig.from_mapping(validation_values)
         self._atomic_write(candidate)
         return self.read_public()

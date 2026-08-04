@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from puppy.ai import AIContentGenerator, AIProvider, GenerationContext, validate_draft
+from puppy.ai import AIProvider
 from puppy.config import AIConfig, ConfigurationError
 
 
@@ -31,18 +31,18 @@ def test_env_file_is_the_only_ai_configuration_source(tmp_path, monkeypatch) -> 
     env_file.write_text(
         "\n".join(
             [
-                "XHS_PROVIDER=siliconflow",
-                "XHS_API_KEY=sk-file-secret-value",
-                "XHS_BASE_URL=https://api.siliconflow.cn/v1",
-                "XHS_MODEL=Pro/zai-org/GLM-5.1",
-                "XHS_API_STYLE=chat_completions",
-                "XHS_REQUEST_TIMEOUT_SECONDS=60",
-                "XHS_MAX_OUTPUT_TOKENS=300",
+                "PUPPY_AI_PROVIDER=siliconflow",
+                "PUPPY_AI_API_KEY=sk-file-secret-value",
+                "PUPPY_AI_BASE_URL=https://api.siliconflow.cn/v1",
+                "PUPPY_AI_MODEL=Pro/zai-org/GLM-5.1",
+                "PUPPY_AI_API_STYLE=chat_completions",
+                "PUPPY_AI_REQUEST_TIMEOUT_SECONDS=60",
+                "PUPPY_AI_MAX_OUTPUT_TOKENS=300",
             ]
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("XHS_MODEL", "process-environment-model")
+    monkeypatch.setenv("PUPPY_AI_MODEL", "process-environment-model")
 
     loaded = AIConfig.from_env_file(env_file)
 
@@ -65,7 +65,7 @@ def test_health_report_never_contains_api_key() -> None:
     assert secret not in json.dumps(report, ensure_ascii=False)
 
 
-def test_siliconflow_uses_chat_completions_wire_api() -> None:
+def test_provider_uses_configured_chat_completions_wire_api() -> None:
     captured = {}
 
     def create(**kwargs):
@@ -80,27 +80,8 @@ def test_siliconflow_uses_chat_completions_wire_api() -> None:
         ),
     )
     provider = AIProvider(config(), client=client)
-    generator = AIContentGenerator(config(), provider=provider)
-
-    value = generator.generate_comment(
-        GenerationContext(note_text="笔记正文", comments=["可见评论"])
-    )
+    value = provider.generate("只返回结果", "公开观察")
 
     assert value == "这篇把关键点讲清楚了。"
     assert captured["model"] == "Pro/zai-org/GLM-5.1"
-    assert captured["messages"][0]["role"] == "system"
-
-
-def test_validate_draft_returns_sendable_single_paragraph() -> None:
-    assert validate_draft("  这篇把关键点讲清楚了。  ", 30) == "这篇把关键点讲清楚了。"
-
-
-@pytest.mark.parametrize("value", ["", "   ", "\n\t"])
-def test_validate_draft_rejects_empty_content(value: str) -> None:
-    with pytest.raises(ValueError, match="空草稿"):
-        validate_draft(value, 30)
-
-
-def test_validate_draft_rejects_content_over_limit() -> None:
-    with pytest.raises(ValueError, match="超过限制"):
-        validate_draft("一" * 31, 30)
+    assert captured["messages"][0] == {"role": "system", "content": "只返回结果"}

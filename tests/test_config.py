@@ -6,13 +6,13 @@ from puppy.config import AIConfigStore, ConfigurationError
 
 
 VALID_ENV = """# keep this comment
-XHS_PROVIDER=siliconflow
-XHS_API_KEY=sk-private-test-value
-XHS_BASE_URL=https://api.siliconflow.cn/v1
-XHS_MODEL=Pro/zai-org/GLM-5.1
-XHS_API_STYLE=chat_completions
-XHS_REQUEST_TIMEOUT_SECONDS=60
-XHS_MAX_OUTPUT_TOKENS=300
+PUPPY_AI_PROVIDER=siliconflow
+PUPPY_AI_API_KEY=sk-private-test-value
+PUPPY_AI_BASE_URL=https://api.siliconflow.cn/v1
+PUPPY_AI_MODEL=Pro/zai-org/GLM-5.1
+PUPPY_AI_API_STYLE=chat_completions
+PUPPY_AI_REQUEST_TIMEOUT_SECONDS=60
+PUPPY_AI_MAX_OUTPUT_TOKENS=300
 """
 
 
@@ -31,18 +31,18 @@ def test_public_configuration_never_returns_api_key(tmp_path) -> None:
     public = store.read_public()
 
     assert public["api_key_present"] is True
-    assert public["values"]["XHS_API_KEY"] == ""
+    assert public["values"]["PUPPY_AI_API_KEY"] == ""
     assert secret not in json.dumps(public, ensure_ascii=False)
 
 
 def test_blank_key_preserves_existing_key_and_explicit_clear_removes_it(tmp_path) -> None:
     store = config_store(tmp_path)
 
-    store.save({"XHS_API_KEY": ""})
-    assert "XHS_API_KEY=sk-private-test-value" in store.path.read_text(encoding="utf-8")
+    store.save({"PUPPY_AI_API_KEY": ""})
+    assert "PUPPY_AI_API_KEY=sk-private-test-value" in store.path.read_text(encoding="utf-8")
 
     result = store.save({}, clear_api_key=True)
-    assert "XHS_API_KEY=\n" in store.path.read_text(encoding="utf-8")
+    assert "PUPPY_AI_API_KEY=\n" in store.path.read_text(encoding="utf-8")
     assert result["api_key_present"] is False
     assert result["ready"] is False
 
@@ -52,6 +52,6 @@ def test_invalid_candidate_does_not_overwrite_configuration(tmp_path) -> None:
     before = store.path.read_text(encoding="utf-8")
 
     with pytest.raises(ConfigurationError, match="有效的 http"):
-        store.save({"XHS_BASE_URL": "not-a-url"})
+        store.save({"PUPPY_AI_BASE_URL": "not-a-url"})
 
     assert store.path.read_text(encoding="utf-8") == before

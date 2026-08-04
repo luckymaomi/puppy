@@ -1,149 +1,119 @@
-from puppy.ai import GenerationError
 from puppy.automation import TaskRunner
-from puppy.page import NoteContext, VisibleComment
-from puppy.tasks import PendingDraft, TaskConfig, TaskStatus, TaskStore
+from puppy.evidence import EvidenceStore
+from puppy.observations import CommentObservation, Observation, ObservationStore
+from puppy.platforms import AdvanceResult, HumanInterventionRequired, ResourceLink
+from puppy.tasks import TaskConfig, TaskStatus, TaskStore
 
 
-class FakeGenerator:
-    def generate_comment(self, context):
-        return "和笔记内容相关的评论"
+class FakeSession:
+    def __init__(self, evidence_root, platform="xiaohongshu") -> None:
+        self.platform = platform
+        self.running = True
+        self.evidence_root = evidence_root
 
-    def generate_reply(self, context):
-        return f"针对“{context.target_comment}”的回复"
+    def status(self):
+        return {"running": self.running, "platform": self.platform if self.running else None}
 
-
-class FakePage:
-    def __init__(self) -> None:
-        self.comments: list[str] = []
-        self.replies: list[str] = []
-        self.active_comment = None
-
-    def submit_comment(self, text: str) -> None:
-        self.comments.append(text)
-
-    def activate_reply(self, comment: VisibleComment) -> None:
-        self.active_comment = comment
-
-    def submit_reply(self, text: str) -> None:
-        assert self.active_comment is not None
-        self.replies.append(text)
-
-    def read_note_context(self, note_id: str) -> NoteContext:
-        assert self.context.note_id == note_id
-        return self.context
+    def with_page(self, callback):
+        return callback(object(), EvidenceStore(self.evidence_root))
 
 
-def test_resume_does_not_duplicate_verified_note_or_comment_writes(tmp_path) -> None:
-    store = TaskStore(tmp_path)
-    task = store.create(
-        TaskConfig(
-            profile_id="default",
-            keyword="AI Agent",
-            send_mode="auto",
-            replies_min=2,
-            replies_max=2,
-            min_delay=1,
-            max_delay=1,
+class FakeAdapter:
+    def __init__(self, resources, *, exhaust_after=True) -> None:
+        self.resources = list(resources)
+        self.exhaust_after = exhaust_after
+        self.opened = []
+        self.closed = []
+
+    def prepare(self, keyword, resource_type):
+        self.keyword = keyword
+        self.resource_type = resource_type
+
+    def discover(self):
+        return list(self.resources)
+
+    def advance(self):
+        return AdvanceResult(moved=False, source_exhausted=self.exhaust_after)
+
+    def open(self, link):
+        self.opened.append(link.resource_id)
+
+    def observe(self, link):
+        return Observation(
+            platform="xiaohongshu",
+            resource_type="note",
+            resource_id=link.resource_id,
+            source_url=f"https://www.xiaohongshu.com/explore/{link.resource_id}",
+            metadata={"title": link.title},
+            content=f"正文 {link.resource_id}",
+            comments=(CommentObservation("用户", "公开评论"),),
         )
-    )
-    runner = TaskRunner(session=None, store=store)
+
+    def close(self, link):
+        self.closed.append(link.resource_id)
+
+
+def note(number):
+    resource_id = f"{number:024x}"
+    return ResourceLink(resource_id, "note", f"/explore/{resource_id}", f"笔记 {number}")
+
+
+def test_count_wander_saves_unique_observations_without_writes(tmp_path, monkeypatch) -> None:
+    adapter = FakeAdapter([note(1), note(2), note(3)])
+    monkeypatch.setattr("puppy.automation.create_adapter", lambda *args, **kwargs: adapter)
+    store = TaskStore(tmp_path / "tasks")
+    observations = ObservationStore(tmp_path / "observations")
+    task = store.create(TaskConfig(platform="xiaohongshu", max_items=2, min_delay=.5, max_delay=.5))
+    runner = TaskRunner(FakeSession(tmp_path / "evidence"), store, observations)
     runner._delay = lambda _: None
-    page = FakePage()
-    context = NoteContext(
-        note_id="64d73b70c2133c0001abcd12",
-        text="笔记正文",
-        comments=(
-            VisibleComment("comment-1", "第一条评论", "用户甲"),
-            VisibleComment("comment-2", "第二条评论", "用户乙"),
-            VisibleComment("comment-3", "第三条评论", "用户丙"),
-        ),
-        media="image",
+
+    result = runner.run(task.id)
+
+    assert result.task.status == TaskStatus.COMPLETE
+    assert result.task.processed_resource_ids == [note(1).resource_id, note(2).resource_id]
+    assert result.task.observation_count == 2
+    assert result.task.visible_comment_count == 2
+    assert adapter.opened == adapter.closed == result.task.processed_resource_ids
+    assert len(observations.list()) == 2
+
+
+def test_resume_skips_already_processed_resource(tmp_path, monkeypatch) -> None:
+    adapter = FakeAdapter([note(1), note(2)])
+    monkeypatch.setattr("puppy.automation.create_adapter", lambda *args, **kwargs: adapter)
+    store = TaskStore(tmp_path / "tasks")
+    observations = ObservationStore(tmp_path / "observations")
+    task = store.create(TaskConfig(platform="xiaohongshu", max_items=2, min_delay=.5, max_delay=.5))
+    task.processed_resource_ids.append(note(1).resource_id)
+    task.observation_count = 1
+    store.save(task)
+    runner = TaskRunner(FakeSession(tmp_path / "evidence"), store, observations)
+    runner._delay = lambda _: None
+
+    result = runner.run(task.id)
+
+    assert result.task.processed_resource_ids == [note(1).resource_id, note(2).resource_id]
+    assert adapter.opened == [note(2).resource_id]
+
+
+def test_platform_gate_waits_for_human_without_marking_content_processed(tmp_path, monkeypatch) -> None:
+    class BlockedAdapter(FakeAdapter):
+        def prepare(self, keyword, resource_type):
+            raise HumanInterventionRequired("安全验证")
+
+    monkeypatch.setattr(
+        "puppy.automation.create_adapter",
+        lambda *args, **kwargs: BlockedAdapter([]),
     )
-    page.context = context
-
-    runner._process_note(task, page, context, FakeGenerator())
-    runner._process_note(task, page, context, FakeGenerator())
-
-    assert page.comments == ["和笔记内容相关的评论"]
-    assert len(page.replies) == 2
-    assert task.comment_count == 1
-    assert task.reply_count == 2
-
-
-def test_ai_failure_pauses_task_for_recovery(tmp_path) -> None:
-    class FailingSession:
-        def with_page(self, callback):
-            raise GenerationError("service unavailable")
-
-    store = TaskStore(tmp_path)
-    task = store.create(TaskConfig(profile_id="default", keyword="AI Agent"))
-    result = TaskRunner(FailingSession(), store).run(task.id)
-
-    assert result.task.status == TaskStatus.PAUSED
-    assert result.task.last_error == "service unavailable"
-
-
-def test_workbench_close_request_wins_over_a_stale_running_save(tmp_path) -> None:
-    class DisconnectingSession:
-        def with_page(self, callback):
-            stale = store.load(task.id)
-            stale.set_status(TaskStatus.RUNNING)
-            store.save(stale)
-            raise RuntimeError("browser disconnected")
-
-    store = TaskStore(tmp_path)
-    task = store.create(TaskConfig(profile_id="default", keyword="AI Agent"))
+    store = TaskStore(tmp_path / "tasks")
+    task = store.create(TaskConfig(platform="xiaohongshu"))
     runner = TaskRunner(
-        DisconnectingSession(),
+        FakeSession(tmp_path / "evidence"),
         store,
-        control_status=lambda _: (TaskStatus.PAUSED, "工作台关闭"),
+        ObservationStore(tmp_path / "observations"),
     )
 
     result = runner.run(task.id)
 
-    assert result.task.status == TaskStatus.PAUSED
-    assert result.task.stop_reason == "工作台关闭"
-    assert store.load(task.id).status == TaskStatus.PAUSED
-
-
-def test_unexpected_browser_exit_pauses_task_for_same_profile_recovery(tmp_path) -> None:
-    class ClosedBrowserSession:
-        running = True
-
-        def status(self):
-            return {
-                "running": self.running,
-                "profile_id": "default" if self.running else None,
-            }
-
-        def with_page(self, callback):
-            self.running = False
-            raise RuntimeError("browser disconnected")
-
-    store = TaskStore(tmp_path)
-    task = store.create(TaskConfig(profile_id="default", keyword="AI Agent"))
-
-    result = TaskRunner(ClosedBrowserSession(), store).run(task.id)
-
-    assert result.task.status == TaskStatus.PAUSED
-    assert "重新启动任务绑定的浏览器" in result.task.stop_reason
-
-
-def test_approval_mode_continues_only_with_the_recorded_decision(tmp_path) -> None:
-    store = TaskStore(tmp_path)
-    task = store.create(TaskConfig(profile_id="default", keyword="AI Agent", send_mode="approval"))
-    runner = TaskRunner(session=None, store=store)
-    task.pending_draft = PendingDraft(
-        kind="comment",
-        text="批准后发送的草稿",
-        note_id="64d73b70c2133c0001abcd12",
-        approval_status="approved",
-    )
-
-    approved = runner._approve(task, task.pending_draft.text, "comment", "笔记正文")
-
-    assert approved == "批准后发送的草稿"
-    task.pending_draft.approval_status = "skipped"
-    skipped = runner._approve(task, task.pending_draft.text, "comment", "笔记正文")
-    assert skipped is None
-    assert task.pending_draft is None
+    assert result.task.status == TaskStatus.WAITING_HUMAN
+    assert result.task.observation_count == 0
+    assert result.task.processed_resource_ids == []

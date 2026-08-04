@@ -17,10 +17,10 @@ from pydantic import BaseModel, Field
 from ..ai import AIProvider
 from ..browser import BrowserSession
 from ..config import AIConfig, AIConfigStore, ConfigurationError
-from ..page import PageGate, XhsPage
+from ..observations import ObservationStore
 from ..paths import AppPaths
-from ..profiles import BrowserProfileStore
-from ..tasks import TaskConfig, TaskStatus, TaskStore, TERMINAL_STATUSES
+from ..platforms import HumanInterventionRequired, create_adapter
+from ..tasks import TaskConfig, TaskStore, TERMINAL_STATUSES
 from .supervisor import EventBroker, TaskSupervisor
 
 
@@ -32,32 +32,20 @@ class ConfigUpdate(BaseModel):
     clear_api_key: bool = False
 
 
-class BrowserProfileCreate(BaseModel):
-    name: str
-
-
 class BrowserStart(BaseModel):
-    profile_id: str
+    platform: Literal["xiaohongshu", "bilibili"]
 
 
 class TaskCreate(BaseModel):
-    keyword: str
-    max_notes: int = 10
-    replies_min: int = 1
-    replies_max: int = 2
-    send_mode: Literal["approval", "auto"] = "approval"
-    min_delay: float = 3
-    max_delay: float = 7
-    daily_write_limit: int = 30
-
-
-class ApprovalAction(BaseModel):
-    action: Literal["send", "edit", "skip", "pause"]
-    text: str | None = None
-
-
-class ResolveAction(BaseModel):
-    result: Literal["sent", "not-sent"]
+    platform: Literal["xiaohongshu", "bilibili"]
+    keyword: str = Field(default="", max_length=80)
+    resource_type: Literal["note", "video", "article"]
+    stop_mode: Literal["count", "duration", "continuous"] = "count"
+    max_items: int | None = Field(default=20, ge=1, le=1000)
+    duration_minutes: int | None = Field(default=None, ge=1, le=1440)
+    comments_limit: int = Field(default=20, ge=0, le=100)
+    min_delay: float = Field(default=2.0, ge=0.5, le=120)
+    max_delay: float = Field(default=5.0, ge=0.5, le=120)
 
 
 @dataclass(slots=True)
@@ -65,9 +53,9 @@ class WebContext:
     token: str
     paths: AppPaths
     config: AIConfigStore
-    profiles: BrowserProfileStore
     browser: BrowserSession
     tasks: TaskStore
+    observations: ObservationStore
     events: EventBroker
     supervisor: TaskSupervisor
 
@@ -83,31 +71,23 @@ def create_app(
     app_paths.ensure()
     config = config_store or AIConfigStore()
     config.ensure()
-    profiles = BrowserProfileStore(app_paths)
     events = EventBroker()
 
     def project_evidence(record: dict[str, Any]) -> None:
         event_type = str(record.get("type") or "evidence")
-        events.publish(
-            event_type,
-            **{key: value for key, value in record.items() if key != "type"},
-        )
+        events.publish(event_type, **{key: value for key, value in record.items() if key != "type"})
 
     browser = BrowserSession(app_paths, event_sink=project_evidence)
     tasks = TaskStore(app_paths.tasks_dir)
-    task_supervisor = supervisor or TaskSupervisor(
-        browser,
-        tasks,
-        events,
-        config_loader=lambda: AIConfig.from_env_file(config.path),
-    )
+    observations = ObservationStore(app_paths.observations_dir)
+    task_supervisor = supervisor or TaskSupervisor(browser, tasks, observations, events)
     context = WebContext(
         token=token,
         paths=app_paths,
         config=config,
-        profiles=profiles,
         browser=browser,
         tasks=tasks,
+        observations=observations,
         events=events,
         supervisor=task_supervisor,
     )
@@ -122,47 +102,41 @@ def create_app(
             finally:
                 browser.close()
 
-    app = FastAPI(
-        title="Puppy",
-        docs_url=None,
-        redoc_url=None,
-        lifespan=lifespan,
-    )
+    app = FastAPI(title="Puppy", docs_url=None, redoc_url=None, lifespan=lifespan)
     app.state.context = context
 
-    def browser_view() -> dict[str, Any]:
-        status = browser.status()
-        profile_id = status.get("profile_id")
-        if profile_id:
-            profile = profiles.load(str(profile_id))
-            status["profile_name"] = profile.name
-        else:
-            status["profile_name"] = None
-        return status
+    def inspect_browser() -> tuple[str, str | None]:
+        browser_state = browser.status()
+        if not browser_state.get("running"):
+            return "stopped", "匿名浏览器未启动"
 
-    def inspect_gate() -> tuple[PageGate, str | None]:
         def inspect(page, evidence):
-            return XhsPage(page, evidence).check_gate()
+            adapter = create_adapter(
+                str(browser_state["platform"]), page, evidence, comments_limit=0
+            )
+            try:
+                adapter.guard()
+                return "ready", None
+            except HumanInterventionRequired as exc:
+                return "human", str(exc)
 
         return browser.with_page(inspect)
 
-    def require_task_browser(task_id: str) -> tuple[dict[str, Any], Any]:
+    def require_task_browser(task_id: str):
         task = tasks.load(task_id)
         browser_state = browser.status()
-        if not browser_state["running"]:
-            raise HTTPException(status_code=409, detail="请先启动任务绑定的浏览器资料")
-        if browser_state.get("profile_id") != task.config.profile_id:
-            raise HTTPException(status_code=409, detail="当前浏览器资料与任务绑定资料不一致")
+        if not browser_state.get("running"):
+            raise HTTPException(status_code=409, detail="请先启动匿名浏览器")
+        if browser_state.get("platform") != task.config.platform:
+            raise HTTPException(status_code=409, detail="当前浏览器平台与任务平台不一致")
         return browser_state, task
 
     @app.middleware("http")
     async def protect_local_api(request: Request, call_next):
         if request.url.path.startswith("/api/"):
-            provided = request.headers.get("x-puppy-token") or request.query_params.get(
-                "token"
-            )
+            provided = request.headers.get("x-puppy-token") or request.query_params.get("token")
             if not provided or not secrets.compare_digest(provided, token):
-                return JSONResponse({"error": "本地控制台凭证无效"}, status_code=401)
+                return JSONResponse({"error": "本地工作台凭证无效"}, status_code=401)
             if request.method not in {"GET", "HEAD", "OPTIONS"}:
                 origin = request.headers.get("origin")
                 host = request.headers.get("host")
@@ -192,36 +166,22 @@ def create_app(
 
     @app.get("/api/bootstrap")
     def bootstrap() -> dict[str, Any]:
-        task_list = tasks.list()[:30]
+        task_list = tasks.list()[:50]
         active = task_supervisor.snapshot()
-        browser_state = browser_view()
-        current_id = active["task_id"]
-        if current_id is None:
-            active_profile_id = browser_state.get("profile_id")
-            current = next(
-                (
-                    item
-                    for item in task_list
-                    if item.status not in TERMINAL_STATUSES
-                    and item.config.profile_id == active_profile_id
-                ),
-                None,
-            ) or next(
-                (item for item in task_list if item.status not in TERMINAL_STATUSES),
-                None,
-            )
-        else:
-            current = next(
-                (item for item in task_list if item.id == current_id),
-                None,
-            )
+        current = next(
+            (item for item in task_list if item.id == active["task_id"]),
+            None,
+        ) or next(
+            (item for item in task_list if item.status not in TERMINAL_STATUSES),
+            None,
+        )
         return {
             "configuration": config.read_public(),
-            "browser": browser_state,
-            "browser_profiles": [item.to_dict() for item in profiles.list()],
+            "browser": browser.status(),
             "supervisor": active,
             "current_task": current.to_dict() if current else None,
             "tasks": [item.to_dict() for item in task_list],
+            "observations": observations.list(limit=30),
             "events": events.history(),
         }
 
@@ -245,97 +205,53 @@ def create_app(
         models = AIProvider(runtime).list_model_ids()
         return {"count": len(models), "models": models, "selected": runtime.model}
 
-    @app.get("/api/browser/profiles")
-    def list_browser_profiles() -> list[dict[str, Any]]:
-        return [item.to_dict() for item in profiles.list()]
-
-    @app.post("/api/browser/profiles", status_code=201)
-    def create_browser_profile(body: BrowserProfileCreate) -> dict[str, Any]:
-        profile = profiles.create(body.name)
-        events.publish(
-            "browser_profile_created", profile_id=profile.id, profile_name=profile.name
-        )
-        return profile.to_dict()
-
     @app.post("/api/browser/start")
     def start_browser(body: BrowserStart) -> dict[str, Any]:
-        profile = profiles.load(body.profile_id)
-        active = task_supervisor.snapshot()
-        if active["running"]:
-            active_task = tasks.load(str(active["task_id"]))
-            if active_task.config.profile_id != profile.id:
-                raise RuntimeError("请先暂停当前任务，再切换浏览器资料")
-        result = browser.start(profile)
-        profile = profiles.mark_used(profile.id)
-        events.publish("browser_updated")
-        return {**result, "profile": profile.to_dict(), "browser": browser_view()}
+        existing = tasks.find_unfinished()
+        if existing is not None and existing.config.platform != body.platform:
+            raise HTTPException(
+                status_code=409,
+                detail=f"未结束任务 {existing.id} 绑定了其他平台",
+            )
+        result = browser.start(body.platform)
+        events.publish("browser_updated", platform=body.platform)
+        return {**result, "browser": browser.status()}
 
     @app.post("/api/browser/stop")
     def stop_browser() -> dict[str, Any]:
-        browser_state = browser.status()
-        active_profile_id = browser_state.get("profile_id")
         active = task_supervisor.snapshot()
-        task_id = active["task_id"]
-        if task_id is not None and active_profile_id is not None:
-            active_task = tasks.load(str(task_id))
-            if active_task.config.profile_id != active_profile_id:
-                raise RuntimeError("运行任务与当前浏览器资料不一致")
-        if task_id is None and active_profile_id is not None:
-            unfinished = tasks.find_unfinished(str(active_profile_id))
-            task_id = unfinished.id if unfinished else None
+        unfinished = tasks.find_unfinished()
         paused_task = None
+        task_id = active["task_id"] or (unfinished.id if unfinished else None)
         if task_id is not None:
-            try:
-                paused_task = task_supervisor.pause(
-                    str(task_id), reason="浏览器已停止，任务暂停"
-                )
-            except ValueError:
-                if tasks.load(str(task_id)).status not in TERMINAL_STATUSES:
-                    raise
+            paused_task = task_supervisor.pause(str(task_id), reason="匿名浏览器已停止，漫游暂停")
         result = browser.close()
         events.publish(
             "browser_stopped",
-            closed=result["closed"],
-            profile_id=active_profile_id,
+            platform=result.get("platform"),
             paused_task_id=paused_task.id if paused_task else None,
+            session_data_removed=result.get("session_data_removed", False),
         )
         events.publish("browser_updated")
-        return {
-            **result,
-            "browser": browser_view(),
-            "paused_task": paused_task.to_dict() if paused_task else None,
-        }
+        return {**result, "browser": browser.status(), "paused_task": paused_task.to_dict() if paused_task else None}
 
     @app.get("/api/browser/status")
     def browser_status() -> dict[str, Any]:
-        return browser_view()
+        return browser.status()
 
     @app.post("/api/browser/check")
     def check_browser() -> dict[str, Any]:
-        gate, reason = inspect_gate()
-        return {"gate": gate.value, "reason": reason}
+        gate, reason = inspect_browser()
+        return {"gate": gate, "reason": reason}
 
     @app.post("/api/tasks", status_code=202)
     def create_task(body: TaskCreate) -> dict[str, Any]:
-        if not config.read_public()["ready"]:
-            raise HTTPException(status_code=409, detail="请先完成 AI 配置")
         browser_state = browser.status()
-        if not browser_state["running"] or not browser_state.get("profile_id"):
-            raise HTTPException(status_code=409, detail="请先启动小红书浏览器")
-        profile_id = str(browser_state["profile_id"])
-        existing = tasks.find_unfinished(profile_id)
-        if existing is not None:
-            raise HTTPException(
-                status_code=409,
-                detail=f"当前浏览器资料已有未完成任务 {existing.id}",
-            )
-        gate, reason = inspect_gate()
-        if gate != PageGate.READY:
-            raise HTTPException(
-                status_code=409,
-                detail=reason or "请先完成浏览器登录或安全验证",
-            )
-        task_config = TaskConfig(profile_id=profile_id, **body.model_dump())
+        if not browser_state.get("running"):
+            raise HTTPException(status_code=409, detail="请先启动匿名浏览器")
+        if browser_state.get("platform") != body.platform:
+            raise HTTPException(status_code=409, detail="浏览器平台与任务平台不一致")
+        task_config = TaskConfig(**body.model_dump())
         task_config.validate()
         return task_supervisor.create_and_start(task_config).to_dict()
 
@@ -353,36 +269,20 @@ def create_app(
 
     @app.post("/api/tasks/{task_id}/resume", status_code=202)
     def resume_task(task_id: str) -> dict[str, Any]:
-        _, task = require_task_browser(task_id)
-        gate, reason = inspect_gate()
-        if gate != PageGate.READY:
-            status = (
-                TaskStatus.WAITING_LOGIN
-                if gate == PageGate.LOGIN
-                else TaskStatus.WAITING_HUMAN
-            )
-            message = reason or "页面仍要求人工处理"
-            task_supervisor.wait_for_page(task_id, status=status, reason=message)
-            raise HTTPException(status_code=409, detail=f"{message}；处理后再继续")
+        require_task_browser(task_id)
+        gate, reason = inspect_browser()
+        if gate != "ready":
+            task_supervisor.wait_for_page(task_id, reason=reason or "页面需要人工处理")
+            raise HTTPException(status_code=409, detail=f"{reason or '页面需要人工处理'}；处理后再继续")
         return task_supervisor.start(task_id).to_dict()
 
     @app.post("/api/tasks/{task_id}/stop")
     def stop_task(task_id: str) -> dict[str, Any]:
         return task_supervisor.stop(task_id).to_dict()
 
-    @app.post("/api/tasks/{task_id}/approval", status_code=202)
-    def approve_task(task_id: str, body: ApprovalAction) -> dict[str, Any]:
-        require_task_browser(task_id)
-        return task_supervisor.approve(
-            task_id, action=body.action, text=body.text
-        ).to_dict()
-
-    @app.post("/api/tasks/{task_id}/resolve")
-    def resolve_task(task_id: str, body: ResolveAction) -> dict[str, Any]:
-        require_task_browser(task_id)
-        return task_supervisor.resolve(
-            task_id, sent=body.result == "sent"
-        ).to_dict()
+    @app.get("/api/observations")
+    def list_observations(limit: int = 100) -> list[dict[str, Any]]:
+        return observations.list(limit=limit)
 
     @app.get("/api/events")
     async def event_stream(request: Request, after: int = 0) -> StreamingResponse:
@@ -409,7 +309,6 @@ def create_app(
         )
 
     app.mount("/assets", StaticFiles(directory=PUBLIC_DIR), name="assets")
-
     return app
 
 

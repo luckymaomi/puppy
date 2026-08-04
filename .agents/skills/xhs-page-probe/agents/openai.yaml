@@ -1,4 +1,4 @@
 interface:
   display_name: "小红书页面探针"
   short_description: "探测小红书匿名漫游、登录弹窗、笔记、评论与人工接管流程"
-  default_prompt: "Use $xhs-page-probe to inspect Xiaohongshu anonymously, preserve page evidence, and distinguish public reading from authorized logged-in actions."
+  default_prompt: "Use $xhs-page-probe to inspect public Xiaohongshu pages anonymously and preserve local page evidence."

@@ -1,26 +1,13 @@
 from __future__ import annotations
 
-import json
 import re
-from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any
 
 from .config import AIConfig
 
 
-COMMENT_LIMIT = 120
-REPLY_LIMIT = 80
-
-
 class GenerationError(RuntimeError):
     pass
-
-
-@dataclass(frozen=True, slots=True)
-class GenerationContext:
-    note_text: str
-    comments: Sequence[str]
-    target_comment: str | None = None
 
 
 class AIProvider:
@@ -109,49 +96,3 @@ class AIProvider:
     def _safe_error(self, exc: Exception) -> str:
         message = str(exc).replace(self.config.api_key, "[REDACTED]")
         return re.sub(r"sk-[A-Za-z0-9_-]{8,}", "[REDACTED]", message)
-
-
-class AIContentGenerator:
-    def __init__(self, config: AIConfig, provider: AIProvider | None = None) -> None:
-        self.provider = provider or AIProvider(config)
-
-    def generate_comment(self, context: GenerationContext) -> str:
-        return self._generate("comment", context, COMMENT_LIMIT)
-
-    def generate_reply(self, context: GenerationContext) -> str:
-        if not context.target_comment:
-            raise ValueError("生成回复时必须提供目标评论")
-        return self._generate("reply", context, REPLY_LIMIT)
-
-    def _generate(self, kind: str, context: GenerationContext, limit: int) -> str:
-        purpose = "笔记评论" if kind == "comment" else "针对已有评论的回复"
-        instructions = (
-            "你为账号 owner 起草小红书互动文字。只输出可直接发送的正文，不加引号、标签或解释。"
-            "内容必须基于提供的可见上下文，具体相关，不虚构亲历，不包含个人敏感信息、营销引流或重复套话。"
-            f"本次输出是{purpose}，最多 {limit} 个字符。"
-        )
-        payload = {
-            "note": context.note_text[:5000],
-            "visible_comments": list(context.comments)[:20],
-            "target_comment": context.target_comment,
-        }
-        try:
-            value = self.provider.generate(
-                instructions, json.dumps(payload, ensure_ascii=False)
-            )
-            return validate_draft(value, limit)
-        except GenerationError:
-            raise
-        except Exception as exc:
-            raise GenerationError(f"AI 草稿生成失败: {exc}") from exc
-
-
-def validate_draft(value: str, limit: int) -> str:
-    draft = " ".join(value.strip().split())
-    if not draft:
-        raise ValueError("AI 返回了空草稿")
-    if len(draft) > limit:
-        raise ValueError(f"AI 草稿长度 {len(draft)} 超过限制 {limit}")
-    if "\n" in draft or "\r" in draft:
-        raise ValueError("AI 草稿必须是单段文本")
-    return draft

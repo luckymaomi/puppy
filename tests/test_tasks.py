@@ -1,73 +1,71 @@
-from datetime import datetime
-
 import pytest
 
-from puppy.tasks import PendingDraft, TaskConfig, TaskState, TaskStatus, TaskStore
+from puppy.tasks import TaskConfig, TaskState, TaskStatus, TaskStore
 
 
-def test_task_store_round_trip_and_daily_write_limit_input(tmp_path) -> None:
+def test_task_store_round_trip_keeps_anonymous_wander_contract(tmp_path) -> None:
     store = TaskStore(tmp_path)
-    task = store.create(TaskConfig(profile_id="default", keyword="AI Agent", send_mode="approval"))
-    task.register_write("comment")
+    task = store.create(
+        TaskConfig(
+            platform="bilibili",
+            keyword="机器人总动员",
+            resource_type="video",
+            stop_mode="continuous",
+        )
+    )
+    task.observation_count = 3
+    task.visible_comment_count = 7
     store.save(task)
 
     loaded = store.load(task.id)
-    assert loaded.config.keyword == "AI Agent"
-    assert loaded.comment_count == 1
-    assert store.daily_write_count(datetime.now().date().isoformat()) == 1
+    assert loaded.config.platform == "bilibili"
+    assert loaded.config.max_items is None
+    assert loaded.observation_count == 3
+    assert loaded.visible_comment_count == 7
 
 
 @pytest.mark.parametrize(
     "config",
     [
-        TaskConfig(profile_id="default", keyword=""),
-        TaskConfig(profile_id="default", keyword="ok", max_notes=0),
-        TaskConfig(profile_id="default", keyword="ok", replies_min=2, replies_max=1),
-        TaskConfig(profile_id="default", keyword="ok", send_mode="unknown"),
+        TaskConfig(platform="unknown"),
+        TaskConfig(platform="bilibili", keyword="", resource_type="video"),
+        TaskConfig(platform="xiaohongshu", resource_type="video"),
+        TaskConfig(platform="xiaohongshu", stop_mode="count", max_items=0),
+        TaskConfig(platform="xiaohongshu", stop_mode="duration", duration_minutes=None),
+        TaskConfig(platform="xiaohongshu", comments_limit=101),
     ],
 )
-def test_task_config_rejects_unsafe_or_ambiguous_limits(config: TaskConfig) -> None:
+def test_task_config_rejects_invalid_platform_or_stop_contract(config: TaskConfig) -> None:
     with pytest.raises(ValueError):
         config.validate()
 
 
-def test_terminal_task_cannot_be_resumed() -> None:
-    state = TaskState("20260802-120000-abcd", TaskConfig(profile_id="default", keyword="test"))
-    state.set_status(TaskStatus.COMPLETE)
-    with pytest.raises(ValueError, match="终态任务"):
-        state.set_status(TaskStatus.RUNNING)
+def test_xiaohongshu_can_wander_recommendations_without_keyword() -> None:
+    config = TaskConfig(platform="xiaohongshu", keyword="", resource_type="note")
+    config.validate()
+    assert config.keyword == ""
 
 
-def test_uncertain_write_requires_explicit_resolution_before_retry() -> None:
-    state = TaskState("20260802-120000-abcd", TaskConfig(profile_id="default", keyword="test"))
-    state.pending_draft = PendingDraft(
-        kind="comment", text="待发送内容", note_id="64d73b70c2133c0001abcd12"
-    )
-    state.begin_write()
-
-    assert state.write_in_flight is not None
-    state.resolve_write(sent=False)
-    assert state.write_in_flight is None
-    assert state.pending_draft is not None
-    assert state.comment_count == 0
-
-    state.begin_write()
-    state.resolve_write(sent=True)
-    assert state.pending_draft is None
-    assert state.comment_count == 1
-
-
-def test_each_browser_profile_has_only_one_unfinished_task(tmp_path) -> None:
+def test_only_one_unfinished_wander_exists_for_the_shared_browser(tmp_path) -> None:
     store = TaskStore(tmp_path)
-    first = store.create(TaskConfig(profile_id="default", keyword="第一个任务"))
+    first = store.create(TaskConfig(platform="xiaohongshu"))
     first.set_status(TaskStatus.PAUSED, reason="稍后继续")
     store.save(first)
 
-    with pytest.raises(ValueError, match="已有未结束任务"):
-        store.create(TaskConfig(profile_id="default", keyword="重复任务"))
+    with pytest.raises(ValueError, match="已有未结束"):
+        store.create(TaskConfig(platform="bilibili", keyword="AI", resource_type="video"))
 
     first.set_status(TaskStatus.STOPPED, reason="不再继续")
     store.save(first)
-    second = store.create(TaskConfig(profile_id="default", keyword="新任务"))
-
+    second = store.create(TaskConfig(platform="bilibili", keyword="AI", resource_type="video"))
     assert second.id != first.id
+
+
+def test_terminal_task_cannot_resume() -> None:
+    state = TaskState(
+        "20260804-120000-a1b2c3d4",
+        TaskConfig(platform="xiaohongshu"),
+    )
+    state.set_status(TaskStatus.COMPLETE)
+    with pytest.raises(ValueError, match="终态任务"):
+        state.set_status(TaskStatus.RUNNING)

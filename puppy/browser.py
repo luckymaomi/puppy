@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import time
 from collections.abc import Callable
@@ -13,10 +14,12 @@ from playwright.sync_api import sync_playwright
 
 from .evidence import EvidenceStore, redact_url
 from .paths import AppPaths
-from .profiles import BrowserProfile
 
 
-EXPLORE_URL = "https://www.xiaohongshu.com/explore"
+START_URLS = {
+    "xiaohongshu": "https://www.xiaohongshu.com/explore",
+    "bilibili": "https://www.bilibili.com/",
+}
 T = TypeVar("T")
 
 
@@ -38,25 +41,23 @@ class BrowserSession:
         self.event_sink = event_sink
         self._process: subprocess.Popen[bytes] | None = None
 
-    def start(
-        self, profile: BrowserProfile, cdp_port: int = 9229
-    ) -> dict[str, Any]:
+    def start(self, platform: str, cdp_port: int = 9229) -> dict[str, Any]:
+        if platform not in START_URLS:
+            raise ValueError("未知匿名浏览平台")
         if not 1024 <= cdp_port <= 65535:
             raise ValueError("CDP 端口必须在 1024 到 65535 之间")
         endpoint = f"http://127.0.0.1:{cdp_port}"
         if endpoint_ready(endpoint):
             if self.paths.session_file.is_file():
                 session = json.loads(self.paths.session_file.read_text(encoding="utf-8"))
-                if (
-                    session.get("endpoint") == endpoint
-                    and session.get("profile_id") == profile.id
-                ):
+                if session.get("endpoint") == endpoint and session.get("platform") == platform:
                     return {**session, "already_running": True}
-            raise RuntimeError("已有其他浏览器资料正在运行，请先停止当前浏览器")
+            raise RuntimeError("已有其他匿名浏览器正在运行，请先停止当前浏览器")
 
         self.paths.ensure()
-        browser_data_dir = self.paths.browser_data_dir.resolve()
-        browser_data_dir.mkdir(parents=True, exist_ok=True)
+        session_id = time.strftime("%Y%m%d-%H%M%S")
+        browser_data_dir = (self.paths.browser_runtime_dir / session_id).resolve()
+        browser_data_dir.mkdir(parents=True, exist_ok=False)
         evidence = EvidenceStore(self.paths.evidence_dir, event_sink=self.event_sink)
 
         with sync_playwright() as playwright:
@@ -71,12 +72,13 @@ class BrowserSession:
                 f"--remote-debugging-port={cdp_port}",
                 "--remote-debugging-address=127.0.0.1",
                 f"--user-data-dir={browser_data_dir}",
-                f"--profile-directory={profile.chromium_directory}",
+                "--incognito",
+                "--disable-sync",
                 "--no-first-run",
                 "--no-default-browser-check",
                 "--window-size=1440,900",
                 "--lang=zh-CN",
-                EXPLORE_URL,
+                START_URLS[platform],
             ],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
@@ -88,40 +90,39 @@ class BrowserSession:
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
             if process.poll() is not None:
+                self._remove_browser_data(browser_data_dir)
                 raise RuntimeError(f"Chromium 启动失败，退出码 {process.returncode}")
             if endpoint_ready(endpoint):
                 break
             time.sleep(0.25)
         else:
+            self._remove_browser_data(browser_data_dir)
             raise TimeoutError("等待 Chromium 调试端口超时")
 
         session = {
             "endpoint": endpoint,
             "cdp_port": cdp_port,
             "browser_pid": process.pid,
-            "profile_id": profile.id,
-            "chromium_directory": profile.chromium_directory,
+            "platform": platform,
             "browser_data_dir": str(browser_data_dir),
             "evidence_dir": str(evidence.run_dir.resolve()),
             "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             "already_running": False,
         }
         temporary = self.paths.session_file.with_suffix(".json.tmp")
-        temporary.write_text(
-            json.dumps(session, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        temporary.write_text(json.dumps(session, ensure_ascii=False, indent=2), encoding="utf-8")
         temporary.replace(self.paths.session_file)
-        evidence.bind(profile_id=profile.id)
-        evidence.event("browser_started", pid=process.pid, url=EXPLORE_URL)
+        evidence.bind(platform=platform)
+        evidence.event("browser_started", pid=process.pid, platform=platform, url=START_URLS[platform])
         return session
 
     def load(self) -> dict[str, Any]:
         if not self.paths.session_file.exists():
-            raise RuntimeError("没有当前浏览器会话，请先运行 `python app.py` 打开工作台")
+            raise RuntimeError("没有匿名浏览器会话，请先从工作台启动")
         session = json.loads(self.paths.session_file.read_text(encoding="utf-8"))
         endpoint = session.get("endpoint")
         if not isinstance(endpoint, str) or not endpoint_ready(endpoint):
-            raise RuntimeError("当前浏览器调试端口不可用；浏览器可能已关闭")
+            raise RuntimeError("匿名浏览器调试端口不可用；浏览器可能已关闭")
         return session
 
     def status(self) -> dict[str, Any]:
@@ -138,7 +139,7 @@ class BrowserSession:
             "endpoint": endpoint if running else None,
             "cdp_port": session.get("cdp_port"),
             "browser_pid": session.get("browser_pid") if running else None,
-            "profile_id": session.get("profile_id") if running else None,
+            "platform": session.get("platform") if running else None,
             "started_at": session.get("started_at"),
         }
 
@@ -155,7 +156,8 @@ class BrowserSession:
 
         endpoint = session.get("endpoint")
         browser_pid = session.get("browser_pid")
-        profile_id = session.get("profile_id")
+        platform = session.get("platform")
+        browser_data_dir = Path(str(session.get("browser_data_dir", "")))
         running = isinstance(endpoint, str) and endpoint_ready(endpoint)
         if running:
             playwright = sync_playwright().start()
@@ -167,7 +169,6 @@ class BrowserSession:
                     raise RuntimeError("关闭项目 Chromium 失败") from exc
             finally:
                 playwright.stop()
-
             deadline = time.monotonic() + timeout_seconds
             while endpoint_ready(endpoint) and time.monotonic() < deadline:
                 time.sleep(0.1)
@@ -175,11 +176,7 @@ class BrowserSession:
                 raise TimeoutError("等待项目 Chromium 退出超时")
 
         managed = self._process
-        if (
-            managed is not None
-            and managed.pid == browser_pid
-            and managed.poll() is None
-        ):
+        if managed is not None and managed.pid == browser_pid and managed.poll() is None:
             try:
                 managed.wait(timeout=1)
             except subprocess.TimeoutExpired:
@@ -191,18 +188,17 @@ class BrowserSession:
                     check=False,
                     timeout=5,
                 )
-                try:
-                    managed.wait(timeout=2)
-                except subprocess.TimeoutExpired as exc:
-                    raise TimeoutError("项目 Chromium 进程树未能完整退出") from exc
+                managed.wait(timeout=2)
 
         self.paths.session_file.unlink(missing_ok=True)
         self._process = None
+        self._remove_browser_data(browser_data_dir)
         return {
             "closed": running,
             "already_stopped": not running,
             "browser_pid": browser_pid,
-            "profile_id": profile_id,
+            "platform": platform,
+            "session_data_removed": True,
         }
 
     def with_page(self, callback: Callable[[Any, EvidenceStore], T]) -> T:
@@ -212,24 +208,32 @@ class BrowserSession:
             run_dir=Path(session["evidence_dir"]),
             event_sink=self.event_sink,
         )
-        evidence.bind(profile_id=session["profile_id"])
+        evidence.bind(platform=session["platform"])
         playwright = sync_playwright().start()
         try:
             browser = playwright.chromium.connect_over_cdp(session["endpoint"])
             pages = [page for context in browser.contexts for page in context.pages]
             if not pages:
-                raise RuntimeError("浏览器没有打开的页面")
+                raise RuntimeError("匿名浏览器没有打开的页面")
             page = pages[-1]
             page.set_default_timeout(8000)
             return callback(page, evidence)
         finally:
             playwright.stop()
 
+    def _remove_browser_data(self, path: Path) -> None:
+        if not path:
+            return
+        root = self.paths.browser_runtime_dir.resolve()
+        resolved = path.resolve()
+        if resolved == root or not resolved.is_relative_to(root):
+            raise RuntimeError("拒绝删除匿名浏览器目录之外的数据")
+        if resolved.exists():
+            shutil.rmtree(resolved)
+
 
 def page_status(page: Any, _: EvidenceStore | None = None) -> dict[str, Any]:
-    viewport = page.viewport_size or page.evaluate(
-        "() => ({width: innerWidth, height: innerHeight})"
-    )
+    viewport = page.viewport_size or page.evaluate("() => ({width: innerWidth, height: innerHeight})")
     return {
         "url": redact_url(page.url),
         "title": page.title(),

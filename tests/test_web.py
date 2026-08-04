@@ -1,20 +1,20 @@
 from fastapi.testclient import TestClient
 
 from puppy.config import AIConfigStore
-from puppy.page import PageGate
+from puppy.observations import Observation
 from puppy.paths import AppPaths
 from puppy.tasks import TaskConfig, TaskStatus, TaskStore
 from puppy.web.api import create_app
 from puppy.web.supervisor import EventBroker
 
 
-VALID_ENV = """XHS_PROVIDER=siliconflow
-XHS_API_KEY=sk-web-test-value
-XHS_BASE_URL=https://api.siliconflow.cn/v1
-XHS_MODEL=Pro/zai-org/GLM-5.1
-XHS_API_STYLE=chat_completions
-XHS_REQUEST_TIMEOUT_SECONDS=60
-XHS_MAX_OUTPUT_TOKENS=300
+VALID_ENV = """PUPPY_AI_PROVIDER=siliconflow
+PUPPY_AI_API_KEY=sk-web-test-value
+PUPPY_AI_BASE_URL=https://api.siliconflow.cn/v1
+PUPPY_AI_MODEL=Pro/zai-org/GLM-5.1
+PUPPY_AI_API_STYLE=chat_completions
+PUPPY_AI_REQUEST_TIMEOUT_SECONDS=60
+PUPPY_AI_MAX_OUTPUT_TOKENS=300
 """
 
 
@@ -28,6 +28,10 @@ class FakeSupervisor:
     def snapshot(self):
         return {"running": False, "task_id": None}
 
+    def create_and_start(self, config):
+        task = self.store.create(config)
+        return self.start(task.id)
+
     def start(self, task_id: str):
         self.started.append(task_id)
         task = self.store.load(task_id)
@@ -35,23 +39,23 @@ class FakeSupervisor:
         self.store.save(task)
         return task
 
-    def pause(self, task_id: str, *, reason: str = "用户从控制台请求暂停"):
+    def pause(self, task_id: str, *, reason: str = "用户从工作台暂停漫游"):
         self.paused.append((task_id, reason))
         task = self.store.load(task_id)
         task.set_status(TaskStatus.PAUSED, reason=reason)
         self.store.save(task)
         return task
 
-    def wait_for_page(self, task_id: str, *, status: TaskStatus, reason: str):
+    def wait_for_page(self, task_id: str, *, reason: str):
         task = self.store.load(task_id)
-        task.set_status(status, reason=reason)
+        task.set_status(TaskStatus.WAITING_HUMAN, reason=reason)
         self.store.save(task)
         return task
 
     def stop(self, task_id: str):
         self.stopped.append(task_id)
         task = self.store.load(task_id)
-        task.set_status(TaskStatus.STOPPED, reason="用户从控制台停止任务")
+        task.set_status(TaskStatus.STOPPED, reason="用户停止任务")
         self.store.save(task)
         return task
 
@@ -59,12 +63,15 @@ class FakeSupervisor:
         pass
 
 
-def web_fixture(tmp_path):
+def web_fixture(tmp_path, *, with_task=True):
     paths = AppPaths(tmp_path / "runtime")
+    paths.ensure()
     store = TaskStore(paths.tasks_dir)
-    task = store.create(TaskConfig(profile_id="default", keyword="AI Agent"))
-    task.set_status(TaskStatus.WAITING_HUMAN, reason="验证码")
-    store.save(task)
+    task = None
+    if with_task:
+        task = store.create(TaskConfig(platform="xiaohongshu"))
+        task.set_status(TaskStatus.WAITING_HUMAN, reason="安全验证")
+        store.save(task)
     env_file = tmp_path / ".env"
     example_file = tmp_path / ".env.example"
     env_file.write_text(VALID_ENV, encoding="utf-8")
@@ -79,29 +86,24 @@ def web_fixture(tmp_path):
     return app, task, supervisor
 
 
-def test_bootstrap_requires_token_and_projects_waiting_human_task(tmp_path) -> None:
+def test_bootstrap_requires_token_and_projects_anonymous_task(tmp_path) -> None:
     app, task, _ = web_fixture(tmp_path)
 
     with TestClient(app) as client:
         assert client.get("/api/bootstrap").status_code == 401
-        response = client.get(
-            "/api/bootstrap", headers={"x-puppy-token": "local-token"}
-        )
+        response = client.get("/api/bootstrap", headers={"x-puppy-token": "local-token"})
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["current_task"]["id"] == task.id
-    assert payload["current_task"]["status"] == "waiting_human"
+    assert payload["current_task"]["config"]["platform"] == "xiaohongshu"
     assert "sk-web-test-value" not in response.text
 
 
-def test_human_confirmation_rechecks_gate_before_resuming(tmp_path) -> None:
+def test_resume_rechecks_public_page_gate(tmp_path) -> None:
     app, task, supervisor = web_fixture(tmp_path)
-    app.state.context.browser.status = lambda: {
-        "running": True,
-        "profile_id": "default",
-    }
-    app.state.context.browser.with_page = lambda callback: (PageGate.HUMAN, "验证码")
+    app.state.context.browser.status = lambda: {"running": True, "platform": "xiaohongshu"}
+    app.state.context.browser.with_page = lambda callback: ("human", "安全验证")
 
     with TestClient(app) as client:
         blocked = client.post(
@@ -111,7 +113,7 @@ def test_human_confirmation_rechecks_gate_before_resuming(tmp_path) -> None:
         assert blocked.status_code == 409
         assert supervisor.started == []
 
-        app.state.context.browser.with_page = lambda callback: (PageGate.READY, None)
+        app.state.context.browser.with_page = lambda callback: ("ready", None)
         resumed = client.post(
             f"/api/tasks/{task.id}/resume",
             headers={"x-puppy-token": "local-token"},
@@ -121,71 +123,80 @@ def test_human_confirmation_rechecks_gate_before_resuming(tmp_path) -> None:
     assert supervisor.started == [task.id]
 
 
-def test_stopping_browser_pauses_current_task_and_closes_session(tmp_path) -> None:
+def test_stopping_browser_pauses_wander_and_reports_session_cleanup(tmp_path) -> None:
     app, task, supervisor = web_fixture(tmp_path)
-    other = app.state.context.tasks.create(
-        TaskConfig(profile_id="other-profile", keyword="另一个账号的任务")
-    )
-    other.set_status(TaskStatus.WAITING_HUMAN, reason="等待另一个账号")
-    app.state.context.tasks.save(other)
-    running = {"value": True}
-
-    def close_browser():
-        running["value"] = False
-        return {
-            "closed": True,
-            "already_stopped": False,
-            "browser_pid": 1234,
-            "profile_id": "default",
-        }
-
-    app.state.context.browser.close = close_browser
-    app.state.context.browser.status = lambda: {
-        "running": running["value"],
-        "profile_id": "default" if running["value"] else None,
+    app.state.context.browser.status = lambda: {"running": True, "platform": "xiaohongshu"}
+    app.state.context.browser.close = lambda: {
+        "closed": True,
+        "already_stopped": False,
+        "browser_pid": 1234,
+        "platform": "xiaohongshu",
+        "session_data_removed": True,
     }
 
     with TestClient(app) as client:
-        response = client.post(
-            "/api/browser/stop",
-            headers={"x-puppy-token": "local-token"},
-        )
+        response = client.post("/api/browser/stop", headers={"x-puppy-token": "local-token"})
 
     assert response.status_code == 200
-    assert response.json()["browser"]["running"] is False
+    assert response.json()["session_data_removed"] is True
     assert response.json()["paused_task"]["status"] == "paused"
-    assert supervisor.paused == [(task.id, "浏览器已停止，任务暂停")]
-    assert app.state.context.tasks.load(task.id).status == TaskStatus.PAUSED
-    assert app.state.context.tasks.load(other.id).status == TaskStatus.WAITING_HUMAN
+    assert supervisor.paused == [(task.id, "匿名浏览器已停止，漫游暂停")]
 
 
-def test_stopping_task_is_terminal_and_does_not_stop_browser(tmp_path) -> None:
-    app, task, supervisor = web_fixture(tmp_path)
-    app.state.context.browser.status = lambda: {
-        "running": True,
-        "profile_id": "default",
+def test_create_task_requires_matching_anonymous_browser_not_ai_readiness(tmp_path) -> None:
+    app, _, supervisor = web_fixture(tmp_path, with_task=False)
+    app.state.context.browser.status = lambda: {"running": True, "platform": "bilibili"}
+    body = {
+        "platform": "bilibili",
+        "keyword": "机器人总动员",
+        "resource_type": "video",
+        "stop_mode": "count",
+        "max_items": 5,
+        "duration_minutes": None,
+        "comments_limit": 10,
+        "min_delay": 2,
+        "max_delay": 5,
     }
 
     with TestClient(app) as client:
         response = client.post(
-            f"/api/tasks/{task.id}/stop",
+            "/api/tasks",
+            json=body,
             headers={"x-puppy-token": "local-token"},
         )
 
-    assert response.status_code == 200
-    assert response.json()["status"] == "stopped"
-    assert supervisor.stopped == [task.id]
+    assert response.status_code == 202
+    assert response.json()["config"]["platform"] == "bilibili"
+    assert supervisor.started == [response.json()["id"]]
+
+
+def test_bootstrap_returns_local_observations(tmp_path) -> None:
+    app, _, _ = web_fixture(tmp_path, with_task=False)
+    app.state.context.observations.save(
+        Observation(
+            platform="xiaohongshu",
+            resource_type="note",
+            resource_id="64d73b70c2133c0001abcd12",
+            source_url="https://www.xiaohongshu.com/explore/64d73b70c2133c0001abcd12",
+            metadata={"title": "公开笔记"},
+            content="正文",
+        )
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/api/bootstrap", headers={"x-puppy-token": "local-token"})
+
+    assert response.json()["observations"][0]["metadata"]["title"] == "公开笔记"
 
 
 def test_event_stream_replays_only_confirmed_events_after_last_sequence() -> None:
     broker = EventBroker()
-    broker.publish("search_submitted", task_id="task-1")
-    broker.publish("search_complete", task_id="task-1", result_count=5)
+    broker.publish("search_complete", task_id="task-1")
+    broker.publish("observation_saved", task_id="task-1", resource_id="BV1")
 
     subscriber = broker.subscribe(after_sequence=1)
     replayed = subscriber.get_nowait()
 
     assert replayed["sequence"] == 2
-    assert replayed["type"] == "search_complete"
-    assert replayed["result_count"] == 5
+    assert replayed["type"] == "observation_saved"
     assert subscriber.empty()

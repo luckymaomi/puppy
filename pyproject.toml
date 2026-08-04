@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "puppy"
 version = "1.0.0"
-description = "Observable terminal automation for Xiaohongshu web interactions"
+description = "Local anonymous public-page wanderer for Xiaohongshu and Bilibili"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"

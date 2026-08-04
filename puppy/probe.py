@@ -39,7 +39,7 @@ def inspect_interactive(page: Any) -> list[dict[str, Any]]:
     return page.evaluate(
         """
         () => {
-          window.__xhsProbeSerial = window.__xhsProbeSerial || 0;
+          window.__puppyProbeSerial = window.__puppyProbeSerial || 0;
           const visible = (node) => {
             const style = getComputedStyle(node);
             const rect = node.getBoundingClientRect();
@@ -57,10 +57,10 @@ def inspect_interactive(page: Any) -> list[dict[str, Any]]:
               return hit && (hit === node || node.contains(hit) || hit.contains(node));
             });
           return nodes.slice(0, 800).map((node) => {
-            let id = node.getAttribute('data-xhs-live-probe-id');
+            let id = node.getAttribute('data-puppy-probe-id');
             if (!id) {
-              id = `node-${++window.__xhsProbeSerial}`;
-              node.setAttribute('data-xhs-live-probe-id', id);
+              id = `node-${++window.__puppyProbeSerial}`;
+              node.setAttribute('data-puppy-probe-id', id);
             }
             const rect = node.getBoundingClientRect();
             let href = null;
@@ -96,7 +96,7 @@ def inspect_scroll(page: Any) -> list[dict[str, Any]]:
     return page.evaluate(
         """
         () => {
-          window.__xhsProbeSerial = window.__xhsProbeSerial || 0;
+          window.__puppyProbeSerial = window.__puppyProbeSerial || 0;
           const visible = (node) => {
             const style = getComputedStyle(node);
             const rect = node.getBoundingClientRect();
@@ -108,10 +108,10 @@ def inspect_scroll(page: Any) -> list[dict[str, Any]]:
             const style = getComputedStyle(node);
             return index === 0 || (node.scrollHeight > node.clientHeight + 4 && /(auto|scroll)/.test(style.overflowY));
           }).slice(0, 100).map((node, index) => {
-            let id = index === 0 ? 'window' : node.getAttribute('data-xhs-live-probe-id');
+            let id = index === 0 ? 'window' : node.getAttribute('data-puppy-probe-id');
             if (!id) {
-              id = `node-${++window.__xhsProbeSerial}`;
-              node.setAttribute('data-xhs-live-probe-id', id);
+              id = `node-${++window.__puppyProbeSerial}`;
+              node.setAttribute('data-puppy-probe-id', id);
             }
             const rect = index === 0 ? {x: 0, y: 0, width: innerWidth, height: innerHeight} : node.getBoundingClientRect();
             return {
@@ -137,17 +137,17 @@ def inspect_links(page: Any) -> list[dict[str, Any]]:
     return page.evaluate(
         """
         () => {
-          window.__xhsProbeSerial = window.__xhsProbeSerial || 0;
+          window.__puppyProbeSerial = window.__puppyProbeSerial || 0;
           const visible = (node) => {
             const style = getComputedStyle(node);
             const rect = node.getBoundingClientRect();
             return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 2 && rect.height > 2;
           };
           return [...document.querySelectorAll('a[href]')].filter(visible).slice(0, 500).map((node) => {
-            let id = node.getAttribute('data-xhs-live-probe-id');
+            let id = node.getAttribute('data-puppy-probe-id');
             if (!id) {
-              id = `node-${++window.__xhsProbeSerial}`;
-              node.setAttribute('data-xhs-live-probe-id', id);
+              id = `node-${++window.__puppyProbeSerial}`;
+              node.setAttribute('data-puppy-probe-id', id);
             }
             let path = null;
             try { path = new URL(node.href, document.baseURI).pathname; } catch (_) {}
@@ -259,7 +259,7 @@ def perform_action(
 
 
 def locator_by_probe_id(page: Any, probe_id: str | None) -> Any:
-    locator = page.locator(f'[data-xhs-live-probe-id="{probe_id}"]')
+    locator = page.locator(f'[data-puppy-probe-id="{probe_id}"]')
     count = locator.count()
     if count != 1:
         raise RuntimeError(f"临时元素 {probe_id} 当前匹配 {count} 个节点，请重新 inspect")

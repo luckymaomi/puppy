@@ -33,7 +33,7 @@
 - 默认使用快速开发模式，直接完成代码、文档、定向测试和收口。
 - 只有 owner 明确要求专业模式、使用计划或继续计划时，才使用 `.agents/skills/plan/SKILL.md` 并维护根目录 `plan.md`；任务规模不能自动触发。
 - 修改实现、测试、事实文档或运行配置时使用 `.agents/skills/puppy-dev/SKILL.md`。
-- 涉及小红书匿名漫游、登录弹窗、人工登录、Playwright 页面探测、搜索结果容器、滚动加载、图片/视频笔记、评论区、真实评论验证或验证码人工接管时使用 `.agents/skills/xhs-page-probe/SKILL.md`。
+- 涉及小红书匿名漫游、登录弹窗、Playwright 页面探测、搜索结果容器、滚动加载、图片/视频笔记、公开评论区或验证码人工接管时使用 `.agents/skills/xhs-page-probe/SKILL.md`。
 - 涉及哔哩哔哩匿名搜索、分页结果、视频新标签页、登录提示、多层 Shadow DOM 评论、专栏页面或持续漫游时使用 `.agents/skills/bilibili-page-probe/SKILL.md`。
 - 业务专属 skill 只在真实业务需要时新增，不把临时任务或产品事实硬编码进通用 skill。
 
