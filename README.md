@@ -1,10 +1,10 @@
 <div align="center">
 
-# Puppy
+# 🐾 Puppy
 
-### 小红书与哔哩哔哩公开页面匿名漫游器
+### 赛博小狗
 
-打开公开页面，关闭可关闭的登录提示，逐条阅读访客可见内容，并把观察与脱敏网页证据留在本地。
+**不登录，不介入，只是走走看看。**
 
 [技术规格](spec.md) · [快速开始](#快速开始) · [开发规则](AGENTS.md)
 
@@ -15,30 +15,52 @@
   <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-0.115-009688">
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-0f766e"></a>
 </p>
+
 </div>
 
-## Puppy 是什么
+---
 
-Puppy 不是账号运营机器人，也不是私有接口采集器。它使用一个全新、非持久的可见 Chromium，只做普通访客能做的公开浏览：搜索或查看推荐流、关闭可关闭的登录提示、滚动、打开内容、读取页面已经呈现的信息、关闭详情，然后继续漫游。
+## 它是什么？
 
-平台页面逻辑彼此独立：小红书适配器处理笔记、详情滚动和反复出现的登录窗；哔哩哔哩适配器处理搜索分页、视频新标签页、多层 Shadow DOM 评论以及专栏的 `cv` / `opus` 详情差异。通用总控负责任务生命周期、三种停止方式、跨页面去重、本地观察、网页证据和工作台。
+Puppy 是一只电子小狗，替你到小红书和 B 站的公开街区里散步。
 
-## 当前能力
+它不登录。每次出门都使用新的临时浏览器资料，不携带账号、Cookie 或上次的会话。
 
-- 小红书公开推荐流与当前可见笔记详情
-- 小红书登录弹窗的逐动作守卫与自动关闭
-- 哔哩哔哩公开关键词搜索、视频分页和专栏摘要
-- B 站视频标题、UP 主、简介、统计、标签与有限可见评论
-- 按指定数量、指定时长或持续模式漫游
-- 统一 JSON 观察，以及 PNG、脱敏 HTML、有限文本证据
-- 深色本地工作台、实时事件流、暂停、继续和停止
-- 独立的可选 AI Provider 配置与健康检查
+它不介入。不点赞、不评论、不收藏、不关注、不发布——只路过，不在页面上留下互动。
 
-Puppy 不登录、不保存长期浏览器资料、不点赞、不收藏、不关注、不评论、不回复、不发布、不下载媒体，也不逆向页面接口或处理验证码。视频画面、音频、字幕理解和 AI 观察摘要尚未接入。
+它漫步，而非互动。关键词、数量和时长只决定去哪里、什么时候回家，不会变成点赞或评论任务。它打开页面，像普通访客一样浏览，逐条把当前公开的信息记下来，整理好带回家给你。
 
-## 快速开始
+---
 
-要求 Windows、Python 3.12 或更高版本。
+## 散步方式
+
+出门前，你可以告诉 Puppy 想去哪里：
+
+- **小红书**：留空关键词，它会沿着推荐流随性漫步；也可以填写关键词，在当前匿名页面提供可用搜索框时搜索。
+- **哔哩哔哩**：给它一个关键词，它会翻翻视频和专栏，把看到的东西告诉你。
+
+你可以设定散步时长、想看多少条内容，也可以让它一直逛到你喊停为止。
+
+路上遇到登录弹窗，Puppy 会顺手关掉（能关的话）。遇到验证码或不可逾越的门禁，它会乖乖停下来等你指示，不会硬闯。
+
+---
+
+## Puppy 会带回来什么？
+
+每看到一条内容，Puppy 会把沿途的见闻整理成四样东西：
+
+1. **观察笔记**（JSON）：结构化的页面信息——标题、作者、简介、统计数字、可见评论……
+2. **现场照片**（截图）：它当时看到了什么画面。
+3. **页面标本**：保留页面结构，并清理脚本、表单值和 URL 查询参数。
+4. **文本摘录**（TXT）：保存有限的当前可见文字，便于快速查看。
+
+这些东西都存放在本地的 `.puppy/` 文件夹里，你可以随时翻看。
+
+---
+
+## 快速带它出门
+
+**需要**：Windows、Python 3.12+
 
 ```powershell
 python -m pip install -e .
@@ -46,54 +68,66 @@ python -m playwright install chromium
 python app.py
 ```
 
-`python app.py` 会在 `127.0.0.1` 的随机端口启动工作台并打开系统浏览器。工作台中的“启动匿名浏览器”会另外打开所选平台的临时 Chromium；停止浏览器或关闭工作台时，本次浏览器资料会删除，任务、观察和脱敏证据继续留在 `.puppy/`。
+运行最后一条命令，会打开一个本地工作台。在工作台里点击“启动匿名浏览器”，Puppy 就出发了。
 
-匿名漫游不需要 AI 配置。需要检查自有 Provider 时，再从 `.env.example` 创建 `.env` 并填写 `PUPPY_AI_*`；API Key 不会在工作台回显。
+> Puppy 散步不需要 AI 配置，开箱即用。`.env.example` 中的 AI Provider 配置目前只用于模型目录和连通性检查，尚未接入观察总结。
 
-## 工作方式
+---
 
-1. 在工作台选择小红书或哔哩哔哩并启动匿名浏览器。
-2. 小红书可以留空关键词浏览推荐流；B 站需要填写搜索关键词。
-3. 选择笔记、视频或专栏，并设置可见评论上限。
-4. 选择指定数量、指定时长或持续漫游，然后启动任务。
-5. Puppy 逐条执行“发现 -> 打开 -> 读取 -> 保存证据 -> 关闭 -> 继续来源”。
-6. 登录窗可关闭时自动关闭；验证码、安全验证、不可关闭的阻断门禁或页面结构不确定时暂停并保留现场。
-7. 在“本地观察”和“运行记录”查看它捡回的内容与真实执行事件。
+## 命令行遛狗
 
-持续漫游没有固定内容数、页数或滚动轮数上限。它仍会在人工停止、连续 6 轮无新增、来源耗尽、安全门禁、浏览器退出或页面失败时结束，不会空转。
+```powershell
+# 启动浏览器（小红书）
+python app.py browser-start --platform xiaohongshu
 
-## 常用命令
+# 小红书上随便逛 10 篇笔记
+python app.py run --platform xiaohongshu --max-items 10
 
-| 命令 | 用途 |
-| --- | --- |
-| `python app.py` | 打开本地工作台 |
-| `python app.py browser-start --platform xiaohongshu` | 启动小红书匿名浏览器 |
-| `python app.py browser-start --platform bilibili` | 启动 B 站匿名浏览器 |
-| `python app.py run --platform xiaohongshu --max-items 10` | 从小红书推荐流读取 10 篇 |
-| `python app.py run --platform bilibili --keyword 机器人总动员 --resource-type video --max-items 10` | 搜索并读取 10 个 B 站视频页面 |
-| `python app.py observations` | 查看最近本地观察 |
-| `python app.py tasks` | 查看任务历史 |
-| `python app.py browser-stop` | 关闭浏览器并删除本次临时资料 |
-| `python app.py health` | 检查可选 AI Provider 配置 |
+# B 站搜索“机器人总动员”，看 10 个视频
+python app.py run --platform bilibili --keyword 机器人总动员 --resource-type video --max-items 10
 
-使用 `python app.py --help` 查看完整命令，使用子命令的 `--help` 查看参数。
+# 翻翻 Puppy 之前带回来的观察记录
+python app.py observations
 
-## 数据位置
+# 查看散步历史
+python app.py tasks
 
-| 路径 | 内容 |
-| --- | --- |
-| `.puppy/state/wanders/` | 匿名漫游任务 |
-| `.puppy/observations/` | 按平台和资源 ID 去重的 JSON 观察 |
-| `.puppy/evidence/` | 事件、视口截图、脱敏 HTML、有限文本与任务摘要 |
-| `.puppy/browser/` | 当前临时浏览器资料，关闭后删除 |
+# 召回 Puppy，关闭浏览器
+python app.py browser-stop
+```
 
-`.env`、`.puppy/` 和 `.puppy-probe/` 均被 Git 忽略。不要提交任何 Cookie、会话资料、API Key 或真实页面证据。
+---
 
-## 项目边界
+## Puppy 的家
 
-Puppy 与 `kitty` 是两个独立项目。本仓库目前不依赖 `kitty`，也尚未实现跨项目消息合同。未来可让 `kitty` 消费 Puppy 已落盘的统一观察对象或调用明确的本地接口，但平台适配器仍只负责页面事实。
+所有 Puppy 带回来的东西，都放在这里：
 
-真实页面已验证事实、当前限制和验收标准见 [spec.md](spec.md)。
+| 路径 | 放什么 |
+|------|--------|
+| `.puppy/state/wanders/` | 每次散步的任务记录 |
+| `.puppy/observations/` | 结构化的页面观察 |
+| `.puppy/evidence/` | 截图、脱敏 HTML、文本摘要 |
+| `.puppy/browser/` | 临时浏览器资料（启动时新建，停止浏览器或关闭工作台时删除） |
+
+> `.env`、`.puppy/` 和 `.puppy-probe/` 都不会被 Git 跟踪。不要提交任何真实页面数据或密钥。
+
+---
+
+## Puppy 的信条
+
+- **不登录**：不给平台任何身份信息，每次都是新面孔。
+- **不介入**：只读公开内容，不执行平台写操作，不逆向接口，也不绕过门禁。
+- **漫步而非互动**：关键词和停止条件只限定浏览范围，不产生点赞、评论或发布目标。
+
+---
+
+## 与 Kitty 的关系
+
+Puppy 和 [Kitty](https://github.com/luckymaomi/kitty) 是两只看各自风景的独立宠物。目前它们各走各的路，未来 Puppy 收集的观察笔记，可能会成为 Kitty 的食粮——但那也是以后的事了。
+
+真实页面已验证事实、当前限制及验收标准详见 [spec.md](spec.md)。
+
+---
 
 ## License
 
